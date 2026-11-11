@@ -45,3 +45,6 @@ Replace **index.html**, **app.js** and **style.css** in the GitHub repository wi
 
 ## Version 3: vertical positioning
 In Build mode, select an imported model and click **Raise** or **Lower** to move it along the vertical (Three.js Y) axis. These buttons share the Movement per click increment and save automatically. The existing compass pad still moves across the ground plane.
+
+
+V4 fix: transform gizmo only appears in Build mode; hidden while flying/exploring, without losing model selection.

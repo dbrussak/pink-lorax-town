@@ -74,13 +74,15 @@ function escapeHtml(str){return String(str).replace(/[&<>"']/g,c=>({'&':'&amp;',
 
 const transform = new TransformControls(camera,renderer.domElement);
 transform.setMode('translate');transform.setSpace('world');transform.setSize(1.1);
-scene.add(transform.getHelper());
+const transformHelper = transform.getHelper();
+scene.add(transformHelper);
+transformHelper.visible = false;
 transform.addEventListener('dragging-changed',e=>{if(e.value)releaseFly();});
 transform.addEventListener('mouseUp',()=>saveLocal());
 transform.addEventListener('objectChange',()=>updatePlacementUI());
 
 function selected(){return selectedId?added.get(selectedId):null;}
-function selectObject(id){selectedId=id&&added.has(id)?id:null;const entry=selected();if(entry){transform.attach(entry.group);transform.visible=mode==='build';transform.enabled=mode==='build';}else{transform.detach();}updateObjectUI();}
+function selectObject(id){selectedId=id&&added.has(id)?id:null;const entry=selected();if(entry){transform.attach(entry.group);transform.enabled=mode==='build';transformHelper.visible=mode==='build';}else{transform.detach();transformHelper.visible=false;}updateObjectUI();}
 function updateObjectUI(){
  $('object-select').innerHTML='<option value="">None selected</option>' + [...added.values()].map(e=>`<option value="${escapeHtml(e.id)}">${escapeHtml(e.name)}</option>`).join('');
  $('object-select').value=selectedId||'';
@@ -172,7 +174,7 @@ async function restoreModels(){try{const db=await dbPromise;const records=await 
 $('save-btn').onclick=async()=>{await saveLocal();toast('Models and positions saved locally in this browser.');};
 $('export-btn').onclick=()=>{const data={format:'pink-lorax-layout-v1',saved:new Date().toISOString(),note:'Transforms only. OBJ and MTL files are not included.',models:[...added.values()].map(e=>{const {objText,mtlText,...meta}=serialize(e);return meta;})};const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='pink-lorax-city-layout.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);};
 
-function showTab(next){releaseFly();mode=next;document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('selected',b.dataset.tab===mode));$('explore-panel').classList.toggle('hidden',mode!=='explore');$('build-panel').classList.toggle('hidden',mode!=='build');$('mode-label').textContent=mode==='explore'?'Explore mode':'Build mode';transform.enabled=mode==='build';transform.visible=mode==='build'&&!!selected();updatePlacementUI();$('crosshair').style.display='none';$('hint').textContent=mode==='explore'?'Click Enter flythrough to fly around':'Select an imported object to move, rotate, or resize it';}
+function showTab(next){releaseFly();mode=next;document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('selected',b.dataset.tab===mode));$('explore-panel').classList.toggle('hidden',mode!=='explore');$('build-panel').classList.toggle('hidden',mode!=='build');$('mode-label').textContent=mode==='explore'?'Explore mode':'Build mode';transform.enabled=mode==='build';transformHelper.visible=mode==='build'&&!!selected();updatePlacementUI();$('crosshair').style.display='none';$('hint').textContent=mode==='explore'?'Click Enter flythrough to fly around':'Select an imported object to move, rotate, or resize it';}
 document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>showTab(b.dataset.tab));
 $('start-btn').onclick=startFly;$('reset-btn').onclick=resetView;$('overview-btn').onclick=overview;
 $('speed').oninput=e=>$('speed-value').textContent=`${e.target.value}×`;

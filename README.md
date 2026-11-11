@@ -42,3 +42,6 @@ OBJ files exported by Tinkercad commonly have Z as up. The application rotates O
 ## Updating from the earlier GitHub Pages prototype
 
 Replace **index.html**, **app.js** and **style.css** in the GitHub repository with the updated files. The city files in `assets/` are unchanged. Import a model under Build and use the numeric position fields or nudge arrows; **Focus camera on selected model** helps locate it. Changes are still saved locally, not shared with other students.
+
+## Version 3: vertical positioning
+In Build mode, select an imported model and click **Raise** or **Lower** to move it along the vertical (Three.js Y) axis. These buttons share the Movement per click increment and save automatically. The existing compass pad still moves across the ground plane.

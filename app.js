@@ -95,7 +95,7 @@ function updatePlacementUI(){
  const e=selected();
  $('placement-controls').classList.toggle('disabled-placement',!e);
  for(const id of placementFieldIds)$(id).disabled=!e;
- for(const id of ['nudge-left','nudge-right','nudge-forward','nudge-back','focus-btn'])$(id).disabled=!e;
+ for(const id of ['nudge-left','nudge-right','nudge-forward','nudge-back','nudge-up','nudge-down','focus-btn'])$(id).disabled=!e;
  if(!e)return;
  const group=e.group;
  // Keep the active field intact while somebody types.
@@ -119,6 +119,9 @@ $('nudge-left').onclick=()=>nudge(-1,0);
 $('nudge-right').onclick=()=>nudge(1,0);
 $('nudge-forward').onclick=()=>nudge(0,-1);
 $('nudge-back').onclick=()=>nudge(0,1);
+$('nudge-up').onclick=()=>nudgeHeight(1);
+$('nudge-down').onclick=()=>nudgeHeight(-1);
+function nudgeHeight(direction){const e=selected();if(!e)return;const step=Number($('nudge-step').value)||20;e.group.position.y+=direction*step;updatePlacementUI();saveLocal();}
 function focusModel(entry=selected()){
  if(!entry)return;
  releaseFly();

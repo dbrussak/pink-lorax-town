@@ -9,3 +9,7 @@
 .nudge-pad {display:flex;justify-content:center;align-items:center;gap:8px;margin:10px 0}
 .nudge-pad .button {min-width:48px;min-height:42px;font-size:20px}
 .nudge-vertical {display:flex;flex-direction:column;gap:5px}
+
+/* Raise/lower the selected model along the vertical Y axis */
+.height-nudge {display:flex;gap:8px;margin:4px 0 12px}
+.height-nudge .button {flex:1;min-height:40px}

@@ -8,7 +8,7 @@ A browser-based viewer using your original `tinker.obj` + `obj.mtl`, plus a loca
 - Flythrough: W/A/S/D; mouse look after **Enter flythrough**; Space rises, Shift descends, Esc releases mouse.
 - **Overview** and **Reset view** controls.
 - **Build** mode imports a student's `.obj` and optional `.mtl` files together.
-- Select an added object, then move, rotate or scale it using the handles. The original city is locked.
+- Select an added object, then move, rotate or scale it using the handles, direct X/Y/Z/rotation/scale inputs, or nudge arrows. The original city is locked.
 - Autosaves uploaded object data and transforms to **this browser's IndexedDB**. A separate button exports layout transforms as JSON.
 
 ## Important limitations
@@ -38,3 +38,7 @@ GitHub Pages serves static files only. A local double-click on `index.html` may 
 Add Supabase Storage for student files, database records for positions/rotations/scales, and Realtime subscriptions to update models when another student saves. Use authenticated student identities with server-side Row Level Security and Storage policies. Add editing locks / change history for conflicts. Do not make public unrestricted write policies or embed a Supabase service-role key in this website.
 
 OBJ files exported by Tinkercad commonly have Z as up. The application rotates OBJ models to the browser's Y-up coordinate system automatically.
+
+## Updating from the earlier GitHub Pages prototype
+
+Replace **index.html**, **app.js** and **style.css** in the GitHub repository with the updated files. The city files in `assets/` are unchanged. Import a model under Build and use the numeric position fields or nudge arrows; **Focus camera on selected model** helps locate it. Changes are still saved locally, not shared with other students.

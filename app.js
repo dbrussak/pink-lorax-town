@@ -77,17 +77,62 @@ transform.setMode('translate');transform.setSpace('world');transform.setSize(1.1
 scene.add(transform.getHelper());
 transform.addEventListener('dragging-changed',e=>{if(e.value)releaseFly();});
 transform.addEventListener('mouseUp',()=>saveLocal());
-transform.addEventListener('objectChange',()=>updateObjectUI());
+transform.addEventListener('objectChange',()=>updatePlacementUI());
 
 function selected(){return selectedId?added.get(selectedId):null;}
-function selectObject(id){selectedId=id&&added.has(id)?id:null;const entry=selected();if(entry){transform.attach(entry.group);transform.visible=true;transform.enabled=true;}else{transform.detach();}updateObjectUI();}
+function selectObject(id){selectedId=id&&added.has(id)?id:null;const entry=selected();if(entry){transform.attach(entry.group);transform.visible=mode==='build';transform.enabled=mode==='build';}else{transform.detach();}updateObjectUI();}
 function updateObjectUI(){
  $('object-select').innerHTML='<option value="">None selected</option>' + [...added.values()].map(e=>`<option value="${escapeHtml(e.id)}">${escapeHtml(e.name)}</option>`).join('');
  $('object-select').value=selectedId||'';
  $('object-count').textContent=added.size;
  $('objects-list').innerHTML=added.size?[...added.values()].map(e=>`<div class="object-item ${selectedId===e.id?'selected':''}" data-id="${escapeHtml(e.id)}"><span>${escapeHtml(e.name)}</span><small>●</small></div>`).join(''):'<div class="empty">No models added yet.</div>';
  $('delete-btn').disabled=!selected();$('place-btn').disabled=!selected();
+ updatePlacementUI();
 }
+// Direct placement controls are an accessible fallback to dragging 3D transform handles.
+const placementFieldIds=['edit-x','edit-y','edit-z','edit-rotation','edit-scale'];
+function updatePlacementUI(){
+ const e=selected();
+ $('placement-controls').classList.toggle('disabled-placement',!e);
+ for(const id of placementFieldIds)$(id).disabled=!e;
+ for(const id of ['nudge-left','nudge-right','nudge-forward','nudge-back','focus-btn'])$(id).disabled=!e;
+ if(!e)return;
+ const group=e.group;
+ // Keep the active field intact while somebody types.
+ const values={'edit-x':group.position.x,'edit-y':group.position.y,'edit-z':group.position.z,'edit-rotation':THREE.MathUtils.radToDeg(group.rotation.y),'edit-scale':group.scale.x};
+ for(const [id,value] of Object.entries(values))if(document.activeElement!==$(id))$(id).value=Number(value.toFixed(3));
+}
+function applyPlacementFields(){
+ const entry=selected();if(!entry)return;
+ const get=(id,fallback)=>{const str=$(id).value;return str.trim()===''?fallback:Number(str);};
+ const g=entry.group;
+ const x=get('edit-x',g.position.x),y=get('edit-y',g.position.y),z=get('edit-z',g.position.z);
+ const degrees=get('edit-rotation',THREE.MathUtils.radToDeg(g.rotation.y));
+ const scale=get('edit-scale',g.scale.x);
+ if(![x,y,z,degrees,scale].every(Number.isFinite)||scale<=0){toast('Please enter valid numbers and a size greater than zero.');updatePlacementUI();return;}
+ g.position.set(x,y,z);g.rotation.y=THREE.MathUtils.degToRad(degrees);g.scale.setScalar(scale);
+ updatePlacementUI();saveLocal();
+}
+for(const id of placementFieldIds)$(id).addEventListener('change',applyPlacementFields);
+function nudge(dx,dz){const e=selected();if(!e)return;const step=Number($('nudge-step').value)||20;e.group.position.x+=dx*step;e.group.position.z+=dz*step;updatePlacementUI();saveLocal();}
+$('nudge-left').onclick=()=>nudge(-1,0);
+$('nudge-right').onclick=()=>nudge(1,0);
+$('nudge-forward').onclick=()=>nudge(0,-1);
+$('nudge-back').onclick=()=>nudge(0,1);
+function focusModel(entry=selected()){
+ if(!entry)return;
+ releaseFly();
+ entry.group.updateMatrixWorld(true);
+ const b=new THREE.Box3().setFromObject(entry.group);
+ const center=b.getCenter(new THREE.Vector3());
+ const size=b.getSize(new THREE.Vector3());
+ const distance=Math.max(18,size.length()*2.2);
+ camera.position.copy(center).add(new THREE.Vector3(distance*0.55,Math.max(14,distance*0.45),distance*0.75));
+ camera.lookAt(center);
+ const euler=new THREE.Euler().setFromQuaternion(camera.quaternion,'YXZ');pitch=euler.x;yaw=euler.y;setOrientation();
+ toast('Selected model centered. Use Move handles, number fields, or arrow buttons.');
+}
+$('focus-btn').onclick=()=>focusModel();
 function positionInFront(group){const dir=new THREE.Vector3();camera.getWorldDirection(dir);dir.y=0;dir.normalize();if(dir.lengthSq()<0.01)dir.set(0,0,-1);group.position.set(camera.position.x+dir.x*30,0,camera.position.z+dir.z*30);}
 async function addModel(name,objText,mtlText,id,transformData){
  const group=newWorldModel(objText,mtlText);
@@ -95,7 +140,7 @@ async function addModel(name,objText,mtlText,id,transformData){
  // Leave smaller student creations a useful default size, without overriding saved transforms.
  if(!transformData && maxDim>150)group.scale.setScalar(100/maxDim);
  if(transformData){group.position.fromArray(transformData.position);group.rotation.fromArray(transformData.rotation);group.scale.fromArray(transformData.scale);}else{positionInFront(group);}
- const uuid=id||crypto.randomUUID();group.userData.modelId=uuid;scene.add(group);added.set(uuid,{id:uuid,name,objText,mtlText,group});selectObject(uuid);saveLocal();return uuid;
+ const uuid=id||crypto.randomUUID();group.userData.modelId=uuid;scene.add(group);added.set(uuid,{id:uuid,name,objText,mtlText,group});selectObject(uuid);saveLocal();if(!transformData && mode==='build')focusModel(added.get(uuid));return uuid;
 }
 $('model-files').addEventListener('change',async event=>{
  const files=[...event.target.files];const obj=files.find(f=>f.name.toLowerCase().endsWith('.obj'));const mtl=files.find(f=>f.name.toLowerCase().endsWith('.mtl'));
@@ -107,7 +152,7 @@ function applyAxis(){if(transform.getMode()!=='translate'){transform.showX=true;
 $('tool-move').onclick=()=>setTool('translate');$('tool-rotate').onclick=()=>setTool('rotate');$('tool-scale').onclick=()=>setTool('scale');$('axis-select').onchange=applyAxis;
 $('object-select').onchange=e=>selectObject(e.target.value);
 $('objects-list').onclick=e=>{const item=e.target.closest('[data-id]');if(item)selectObject(item.dataset.id);};
-$('place-btn').onclick=()=>{const e=selected();if(e){positionInFront(e.group);saveLocal();toast('Model moved in front of your camera.');}};
+$('place-btn').onclick=()=>{const e=selected();if(e){positionInFront(e.group);updatePlacementUI();saveLocal();focusModel(e);toast('Model moved in front of your camera.');}};
 $('delete-btn').onclick=()=>{const e=selected();if(!e)return;if(!confirm(`Delete “${e.name}” from this browser?`))return;scene.remove(e.group);added.delete(e.id);selectObject(null);saveLocal();toast('Model deleted.');};
 renderer.domElement.addEventListener('pointerdown',e=>{
  if(mode!=='build'||pointerLocked||e.button!==0||transform.dragging)return;
@@ -124,7 +169,7 @@ async function restoreModels(){try{const db=await dbPromise;const records=await 
 $('save-btn').onclick=async()=>{await saveLocal();toast('Models and positions saved locally in this browser.');};
 $('export-btn').onclick=()=>{const data={format:'pink-lorax-layout-v1',saved:new Date().toISOString(),note:'Transforms only. OBJ and MTL files are not included.',models:[...added.values()].map(e=>{const {objText,mtlText,...meta}=serialize(e);return meta;})};const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='pink-lorax-city-layout.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);};
 
-function showTab(next){releaseFly();mode=next;document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('selected',b.dataset.tab===mode));$('explore-panel').classList.toggle('hidden',mode!=='explore');$('build-panel').classList.toggle('hidden',mode!=='build');$('mode-label').textContent=mode==='explore'?'Explore mode':'Build mode';transform.enabled=mode==='build';transform.visible=mode==='build'&&!!selected();$('crosshair').style.display='none';$('hint').textContent=mode==='explore'?'Click Enter flythrough to fly around':'Select an imported object to move, rotate, or resize it';}
+function showTab(next){releaseFly();mode=next;document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('selected',b.dataset.tab===mode));$('explore-panel').classList.toggle('hidden',mode!=='explore');$('build-panel').classList.toggle('hidden',mode!=='build');$('mode-label').textContent=mode==='explore'?'Explore mode':'Build mode';transform.enabled=mode==='build';transform.visible=mode==='build'&&!!selected();updatePlacementUI();$('crosshair').style.display='none';$('hint').textContent=mode==='explore'?'Click Enter flythrough to fly around':'Select an imported object to move, rotate, or resize it';}
 document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>showTab(b.dataset.tab));
 $('start-btn').onclick=startFly;$('reset-btn').onclick=resetView;$('overview-btn').onclick=overview;
 $('speed').oninput=e=>$('speed-value').textContent=`${e.target.value}×`;

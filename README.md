@@ -34,3 +34,31 @@ V6: Raise/Lower moved into a sticky section at top of Build panel, with trackpad
 - Build mode includes a **Show / restore 3D movement handles** button, which reattaches the gizmo to a selected model and focuses the camera. Select a model and make sure editing is enabled. Handles hide in Explore mode.
 - Database deletion synchronizes to all clients. Uploaded files are retained in private Storage as orphan files until teacher cleanup.
 - Publish updated index.html and app.js; style.css and assets unchanged.
+
+
+## V8: Complete city backup and camera-based placement
+
+- Build mode includes **Export complete city ZIP**. This reads *current* saved
+  `city_objects` rows from Supabase, downloads all referenced OBJ files and
+  optional MTLs from the private `city-models` bucket, and includes the two
+  baseline files currently hosted in `assets/`. It also exports
+  `city_layout.json` with the transforms, ids, and original file paths.
+- The ZIP is an archive of individual models plus transforms, **not** one
+  merged OBJ positioned in city coordinates. Automatic restore/import is
+  not provided in V8.
+- The exporter works even when class editing is OFF, provided Supabase
+  anonymous authentication and existing read permissions are available.
+- This export button is **not teacher-only**; authenticated anonymous
+  visitors who can access the city can download shared models. A truly
+  teacher-only export needs a teacher authentication/role policy.
+- Newly imported models are positioned on the city's ground plane near the
+  current camera aim. If the view ray points down, it intersects the ground;
+  otherwise a forward point is used. The model base is corrected to Y=0
+  after scaling. Saved models keep their existing transforms.
+
+### Deploy V8
+
+Replace `index.html` and `app.js` in GitHub and commit. `style.css`, the
+existing `assets/`, and Supabase SQL policies are unchanged. ZIP includes
+all project files for a full redeployment as well. This build was syntax
+checked but has not been tested against your live GitHub/Supabase site.

@@ -3,6 +3,7 @@ import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
+import JSZip from 'https://cdn.jsdelivr.net/npm/jszip@3.10.1/+esm';
 
 const $ = id => document.getElementById(id);
 const SB_URL = 'https://xpldpzhujfdsnhxgirof.supabase.co';
@@ -284,14 +285,36 @@ function focusModel(entry=selected()){
  toast('Selected model centered. Use Move handles, number fields, or arrow buttons.');
 }
 $('focus-btn').onclick=()=>focusModel();
-function positionInFront(group){const dir=new THREE.Vector3();camera.getWorldDirection(dir);dir.y=0;dir.normalize();if(dir.lengthSq()<0.01)dir.set(0,0,-1);group.position.set(camera.position.x+dir.x*30,0,camera.position.z+dir.z*30);}
+// Place a new object where the camera is aiming at the city's ground plane.
+// New-world models are normalized so their lowest vertex starts at local Y=0;
+// after scaling, world-space group Y=0 therefore puts the base flush with ground.
+function positionInFront(group){
+ camera.updateMatrixWorld(true);
+ const direction=new THREE.Vector3();
+ camera.getWorldDirection(direction).normalize();
+ const origin=camera.getWorldPosition(new THREE.Vector3());
+ // Intersect view ray with y=0 whenever looking downward. If looking level/up,
+ // use a point in the forward direction instead of sending the model to infinity.
+ let distance=70;
+ if(direction.y < -0.015 && origin.y > 0){
+   const intersectionDistance=-origin.y/direction.y;
+   if(intersectionDistance>0)distance=THREE.MathUtils.clamp(intersectionDistance,12,180);
+ }
+ const point=origin.clone().addScaledVector(direction,distance);
+ group.position.set(point.x,0,point.z);
+ // Correct any small numerical errors: make the *scaled* object's lowest
+ // world-space point exactly coincide with the ground plane.
+ group.updateMatrixWorld(true);
+ const bounds=new THREE.Box3().setFromObject(group);
+ if(!bounds.isEmpty())group.position.y-=bounds.min.y;
+}
 async function addModel(name,objText,mtlText,id,transformData,options={}){
  const group=newWorldModel(objText,mtlText);
  const initialBounds=new THREE.Box3().setFromObject(group);const maxDim=initialBounds.getSize(new THREE.Vector3()).length();
  // Leave smaller student creations a useful default size, without overriding saved transforms.
  if(!transformData && maxDim>150)group.scale.setScalar(100/maxDim);
  if(transformData){group.position.fromArray(transformData.position);group.rotation.fromArray(transformData.rotation);group.scale.fromArray(transformData.scale);}else{positionInFront(group);}
- const uuid=id||crypto.randomUUID();group.userData.modelId=uuid;scene.add(group);added.set(uuid,{id:uuid,name,objText,mtlText,group,modelPath:options.modelPath||null,createdBy:options.createdBy||null});if(options.remote&&transformData){updateObjectUI();}else{selectObject(uuid);if(!transformData&&mode==='build')focusModel(added.get(uuid));}return uuid;
+ const uuid=id||crypto.randomUUID();group.userData.modelId=uuid;scene.add(group);added.set(uuid,{id:uuid,name,objText,mtlText,group,modelPath:options.modelPath||null,createdBy:options.createdBy||null});if(options.remote&&transformData){updateObjectUI();}else{selectObject(uuid);if(!transformData&&mode==='build')toast('Model placed on the ground near your view. Use Focus to inspect or edit it.');}return uuid;
 }
 $('model-files').addEventListener('change',async event=>{
  const files=[...event.target.files];const obj=files.find(f=>f.name.toLowerCase().endsWith('.obj'));const mtl=files.find(f=>f.name.toLowerCase().endsWith('.mtl'));
@@ -331,7 +354,89 @@ renderer.domElement.addEventListener('pointerdown',e=>{
 
 // Shared Supabase is the canonical source. No local IndexedDB writes in this version.
 $('save-btn').onclick=async()=>{if(!editingEnabled)return;saveShared();toast('Placement queued for saving to shared city.');};
-$('export-btn').onclick=()=>{const data={format:'pink-lorax-layout-v1',saved:new Date().toISOString(),note:'Transforms only. OBJ and MTL files are not included.',models:[...added.values()].map(e=>{const {objText,mtlText,...meta}=serialize(e);return meta;})};const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='pink-lorax-city-layout.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);};
+// Download a complete, portable snapshot of the live city. Always query the
+// database rather than relying on models currently loaded in this browser.
+// Read-only operation: permitted with the existing class read policies even
+// while editing is switched off. It does not delete or change server data.
+let exportingBackup=false;
+function setBackupStatus(message){$('backup-status').textContent=message;}
+async function downloadCityBackup(){
+ if(exportingBackup)return;
+ if(!online){toast('Connect to Supabase before exporting.');return;}
+ exportingBackup=true;
+ $('export-btn').disabled=true;
+ try{
+  setBackupStatus('Reading saved city layout…');
+  const {data:settings,error:settingsError}=await supabase.from('city_settings').select('editing_enabled').eq('id',1).single();
+  if(settingsError)throw settingsError;
+  const rows=[];
+  // PostgREST paginates results. Collect every row, not just the first page.
+  for(let offset=0;;offset+=500){
+   const {data,error}=await supabase.from('city_objects').select('*').order('created_at',{ascending:true}).order('id',{ascending:true}).range(offset,offset+499);
+   if(error)throw error;
+   rows.push(...(data||[]));
+   if(!data || data.length<500)break;
+  }
+  const zip=new JSZip();
+  const baseline=zip.folder('baseline');
+  const assets=[['tinker.obj','assets/tinker.obj'],['obj.mtl','assets/obj.mtl']];
+  for(const [name,path] of assets){
+    setBackupStatus('Downloading baseline '+name+'…');
+    const response=await fetch(path,{cache:'no-store'});
+    if(!response.ok)throw new Error('Could not retrieve '+path+' (HTTP '+response.status+')');
+    baseline.file(name,await response.blob());
+  }
+  const models=zip.folder('student_models');
+  const manifest=[];
+  for(let i=0;i<rows.length;i++){
+   const record=rows[i];
+   setBackupStatus(`Downloading model ${i+1} of ${rows.length}: ${record.name||record.id}…`);
+   // Use UUID as the folder name to keep paths unique; don't use untrusted filenames.
+   const folder=models.folder(record.id);
+   if(!/^[0-9a-f-]{36}$/i.test(record.id))throw new Error('Invalid model identifier in city database');
+   if(!record.model_path || !record.model_path.toLowerCase().endsWith('.obj'))throw new Error('Invalid OBJ path for '+record.id);
+   const {data:obj,error:objError}=await supabase.storage.from('city-models').download(record.model_path);
+   if(objError)throw new Error('OBJ download failed for '+record.name+': '+objError.message);
+   const originalObjText=await obj.text();
+   const mtlPath=record.model_path.replace(/\.obj$/i,'.mtl');
+   const {data:mtl,error:mtlError}=await supabase.storage.from('city-models').download(mtlPath);
+   // A model without an MTL is valid; an MTL download can also fail due to a
+   // transient error, so report the missing file rather than silently hiding it.
+   if(mtlError && !(/not found|not_found|404/i.test(mtlError.message||'') || mtlError.statusCode==='404')){
+     throw new Error('MTL download failed for '+record.name+': '+mtlError.message);
+   }
+   if(mtl)folder.file('model.mtl',mtl);
+   // OBJ files exported by Tinkercad can reference a different MTL filename.
+   // Normalize the archived copy so it loads alongside model.mtl.
+   let backupObjText=originalObjText;
+   if(mtl){
+     if(/^mtllib\s+.+$/im.test(backupObjText))backupObjText=backupObjText.replace(/^mtllib\s+.+$/im,'mtllib model.mtl');
+     else backupObjText='mtllib model.mtl\n'+backupObjText;
+   }
+   folder.file('model.obj',backupObjText);
+   manifest.push({
+    ...record,
+    backup_obj:`student_models/${record.id}/model.obj`,
+    backup_mtl:mtl?`student_models/${record.id}/model.mtl`:null,
+    original_mtl_path:mtlPath,
+   });
+  }
+  const exportedAt=new Date().toISOString();
+  zip.file('city_layout.json',JSON.stringify({format:'pink-lorax-complete-city-backup-v1',exported_at:exportedAt,baseline_files:['baseline/tinker.obj','baseline/obj.mtl'],editing_enabled_at_export:settings.editing_enabled,models:manifest},null,2));
+  zip.file('README.txt',`Pink Lorax Town — full city backup\nCreated: ${exportedAt}\nStudent models: ${rows.length}\n\nContents:\n  baseline/ — Tinkercad base OBJ and MTL\n  student_models/<UUID>/model.obj and optional model.mtl\n  city_layout.json — Supabase rows including each model's transform\n\nThis is an archive, not a combined, pre-positioned OBJ.\nRestoring placement requires the city layout JSON and a restoration tool.\nNo files were removed from Supabase.\n`);
+  setBackupStatus('Compressing ZIP…');
+  const blob=await zip.generateAsync({type:'blob',compression:'DEFLATE',compressionOptions:{level:5}},meta=>{setBackupStatus('Compressing ZIP… '+Math.round(meta.percent)+'%');});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');a.href=url;
+  a.download=`Pink_Lorax_Town_Backup_${exportedAt.slice(0,10)}.zip`;
+  document.body.appendChild(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),60000);
+  setBackupStatus(`Backup downloaded: ${rows.length} shared model(s), original city, and placements.`);
+  toast('Full city ZIP downloaded.');
+ }catch(err){console.error('City backup failed',err);setBackupStatus('Backup failed: '+err.message);toast('Backup failed: '+err.message);}
+ finally{exportingBackup=false;$('export-btn').disabled=false;}
+}
+$('export-btn').onclick=downloadCityBackup;
 
 function showTab(next){releaseFly();mode=next;document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('selected',b.dataset.tab===mode));$('explore-panel').classList.toggle('hidden',mode!=='explore');$('build-panel').classList.toggle('hidden',mode!=='build');$('mode-label').textContent=mode==='explore'?'Explore mode':'Build mode';showTransformHandles();updateDeleteUI();updatePlacementUI();$('crosshair').style.display='none';$('hint').textContent=mode==='explore'?'Click Enter flythrough to fly around':'Select an imported object to move, rotate, or resize it';}
 document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>showTab(b.dataset.tab));

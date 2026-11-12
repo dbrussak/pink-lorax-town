@@ -25,3 +25,12 @@ Upload **all files from this directory** to your GitHub Pages repository, or jus
 - OBJ models are centered and oriented for the viewer. Every imported object is standalone.
 - Initial load can be slow on low-powered Chromebooks. Changes save at the end of a gizmo drag or on field/button edits.
 - No robust server-side malware/content inspection; the app and storage restrict extensions/size, but text OBJ can still be huge or malformed.
+
+V6: Raise/Lower moved into a sticky section at top of Build panel, with trackpad instructions clarified. Supabase unchanged.
+
+## V7: 3D handles and own-model deletion
+- **Run `supabase_delete_own_models_v7.sql` in SQL Editor** before publishing V7.
+- Students can remove **only their own models**, during class editing hours. Other students' models remain protected. The original base city stays locked.
+- Build mode includes a **Show / restore 3D movement handles** button, which reattaches the gizmo to a selected model and focuses the camera. Select a model and make sure editing is enabled. Handles hide in Explore mode.
+- Database deletion synchronizes to all clients. Uploaded files are retained in private Storage as orphan files until teacher cleanup.
+- Publish updated index.html and app.js; style.css and assets unchanged.

@@ -15,3 +15,9 @@
 .height-nudge .button {flex:1;min-height:40px}
 
 #connection-state{font-size:11px;color:#a4c8d3;padding:3px 7px}#edit-status{font-size:11px;font-weight:800;color:#b9c4d3;border:1px solid #798298;border-radius:6px;padding:5px 7px;white-space:nowrap}#edit-status.live{color:#64efb0;border-color:#369a6f}.upload:has(+input:disabled){opacity:.45;pointer-events:none}
+
+/* Keep vertical placement controls visible inside the scrolling Build sidebar. */
+.height-quick-controls{position:sticky;top:0;z-index:7;background:#202232;border:1px solid #62516d;border-radius:10px;padding:10px 10px 0;margin:12px 0;box-shadow:0 5px 15px #0005}
+.height-caption{font-size:10px;font-weight:800;letter-spacing:.1em;color:#ffd1e8;margin-bottom:5px}
+.height-quick-controls .height-nudge{margin:0 0 10px}
+.height-quick-controls .button{font-size:13px}

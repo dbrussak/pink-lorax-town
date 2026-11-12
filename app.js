@@ -20,10 +20,10 @@ function setEditing(enabled){
  $('edit-status').classList.toggle('live',permitted);
  $('save-btn').disabled=!permitted;
  $('place-btn').disabled=!permitted||!selected();
- $('delete-btn').disabled=true;
- $('delete-btn').title='Deletion is reserved for the teacher in Supabase';
+ updateDeleteUI();
  transform.enabled=permitted&&mode==='build';
- transformHelper.visible=permitted&&mode==='build'&&!!selected();
+ showTransformHandles();
+ updateDeleteUI();
  updatePlacementUI();
 }
 async function initSupabase(){
@@ -79,7 +79,7 @@ async function loadRecord(record){
    position:[record.position_x,record.position_y,record.position_z],
    rotation:[0,record.rotation_y,0],scale:[record.scale,record.scale,record.scale]
   },{remote:true,modelPath:record.model_path});
-  const entry=added.get(id); if(entry)entry.modelPath=record.model_path;
+  const entry=added.get(id); if(entry){entry.modelPath=record.model_path;entry.createdBy=record.created_by;updateDeleteUI();}
  }catch(e){console.error('Could not load shared model',record.name,e);toast('Could not load '+record.name+': '+e.message);}finally{remoteQueue.delete(record.id);}
 }
 async function syncAllModels(){
@@ -97,7 +97,7 @@ async function refreshOneModel(id){
  if(error){console.error(error);return;}
  if(data)await loadRecord(data);else removeRemoteModel(id);
 }
-function removeRemoteModel(id){const entry=added.get(id);if(!entry)return;scene.remove(entry.group);added.delete(id);if(selectedId===id)selectObject(null);else updateObjectUI();}
+function removeRemoteModel(id){const entry=added.get(id);if(!entry)return;scene.remove(entry.group);added.delete(id);if(selectedId===id)selectObject(null);else updateObjectUI();showTransformHandles();}
 const saves=new Map();
 function saveShared(){
  if(!editingEnabled||!online)return;
@@ -124,7 +124,7 @@ async function uploadShared(name,objText,mtlText){
  if(mtlText)await upload('mtl',mtlText);
  // Publish only after all necessary files are uploaded. Orphan files can be cleaned by the teacher.
  const idLocal=await addModel(name,objText,mtlText,id,null,{remote:true,modelPath:objPath});
- const entry=added.get(idLocal);
+ const entry=added.get(idLocal);entry.createdBy=authUser.id;updateDeleteUI();
  const payload={id,name,model_path:objPath,created_by:authUser.id,...serializeTransform(entry)};
  const {error}=await supabase.from('city_objects').insert(payload);
  if(error){removeRemoteModel(idLocal);throw error;}
@@ -209,13 +209,31 @@ transform.addEventListener('mouseUp',()=>saveShared());
 transform.addEventListener('objectChange',()=>updatePlacementUI());
 
 function selected(){return selectedId?added.get(selectedId):null;}
-function selectObject(id){selectedId=id&&added.has(id)?id:null;const entry=selected();if(entry){transform.attach(entry.group);transform.enabled=mode==='build'&&editingEnabled;transformHelper.visible=mode==='build'&&editingEnabled;}else{transform.detach();transformHelper.visible=false;}updateObjectUI();}
+function showTransformHandles(){
+ const entry=selected();
+ const canShow=mode==='build'&&editingEnabled&&online&&!!entry;
+ if(canShow && transform.object!==entry.group)transform.attach(entry.group);
+ transform.enabled=canShow;
+ transformHelper.visible=canShow;
+}
+function selectObject(id){
+ selectedId=id&&added.has(id)?id:null;
+ if(!selected())transform.detach();
+ showTransformHandles();updateObjectUI();
+}
+function updateDeleteUI(){
+ const entry=selected();
+ const own=!!entry&&!!authUser&&entry.createdBy===authUser.id;
+ $('delete-btn').disabled=!(mode==='build'&&editingEnabled&&online&&own);
+ $('delete-btn').title=own?'Remove your uploaded model from the shared city':'Only the uploader can delete their model during class';
+}
+
 function updateObjectUI(){
  $('object-select').innerHTML='<option value="">None selected</option>' + [...added.values()].map(e=>`<option value="${escapeHtml(e.id)}">${escapeHtml(e.name)}</option>`).join('');
  $('object-select').value=selectedId||'';
  $('object-count').textContent=added.size;
  $('objects-list').innerHTML=added.size?[...added.values()].map(e=>`<div class="object-item ${selectedId===e.id?'selected':''}" data-id="${escapeHtml(e.id)}"><span>${escapeHtml(e.name)}</span><small>●</small></div>`).join(''):'<div class="empty">No models added yet.</div>';
- $('delete-btn').disabled=true;$('place-btn').disabled=!editingEnabled||!selected();
+ updateDeleteUI();$('place-btn').disabled=!editingEnabled||!selected();
  updatePlacementUI();
 }
 // Direct placement controls are an accessible fallback to dragging 3D transform handles.
@@ -273,7 +291,7 @@ async function addModel(name,objText,mtlText,id,transformData,options={}){
  // Leave smaller student creations a useful default size, without overriding saved transforms.
  if(!transformData && maxDim>150)group.scale.setScalar(100/maxDim);
  if(transformData){group.position.fromArray(transformData.position);group.rotation.fromArray(transformData.rotation);group.scale.fromArray(transformData.scale);}else{positionInFront(group);}
- const uuid=id||crypto.randomUUID();group.userData.modelId=uuid;scene.add(group);added.set(uuid,{id:uuid,name,objText,mtlText,group,modelPath:options.modelPath||null});if(options.remote&&transformData){updateObjectUI();}else{selectObject(uuid);if(!transformData&&mode==='build')focusModel(added.get(uuid));}return uuid;
+ const uuid=id||crypto.randomUUID();group.userData.modelId=uuid;scene.add(group);added.set(uuid,{id:uuid,name,objText,mtlText,group,modelPath:options.modelPath||null,createdBy:options.createdBy||null});if(options.remote&&transformData){updateObjectUI();}else{selectObject(uuid);if(!transformData&&mode==='build')focusModel(added.get(uuid));}return uuid;
 }
 $('model-files').addEventListener('change',async event=>{
  const files=[...event.target.files];const obj=files.find(f=>f.name.toLowerCase().endsWith('.obj'));const mtl=files.find(f=>f.name.toLowerCase().endsWith('.mtl'));
@@ -283,13 +301,27 @@ $('model-files').addEventListener('change',async event=>{
   await uploadShared(obj.name.replace(/\.obj$/i,''),objText,mtlText);statusText(`${obj.name} added to shared city.`);
  }catch(err){statusText(`Could not upload model: ${err.message}`);console.error(err);}finally{event.target.value='';}
 });
-function setTool(tool){transform.setMode(tool);for(const [name,id] of [['translate','tool-move'],['rotate','tool-rotate'],['scale','tool-scale']])$(id).classList.toggle('active',name===tool);applyAxis();}
+function setTool(tool){showTransformHandles();transform.setMode(tool);for(const [name,id] of [['translate','tool-move'],['rotate','tool-rotate'],['scale','tool-scale']])$(id).classList.toggle('active',name===tool);applyAxis();}
 function applyAxis(){if(transform.getMode()!=='translate'){transform.showX=true;transform.showY=true;transform.showZ=true;return;}const all=$('axis-select').value==='XYZ';transform.showX=true;transform.showY=all;transform.showZ=true;}
+$('show-handles-btn').onclick=()=>{showTransformHandles();if(selected()){setTool('translate');focusModel();toast('Movement handles restored.');}else toast('Select an imported model first.');};
 $('tool-move').onclick=()=>setTool('translate');$('tool-rotate').onclick=()=>setTool('rotate');$('tool-scale').onclick=()=>setTool('scale');$('axis-select').onchange=applyAxis;
 $('object-select').onchange=e=>selectObject(e.target.value);
 $('objects-list').onclick=e=>{const item=e.target.closest('[data-id]');if(item)selectObject(item.dataset.id);};
 $('place-btn').onclick=()=>{const e=selected();if(e&&editingEnabled){positionInFront(e.group);updatePlacementUI();saveShared();focusModel(e);toast('Model moved in front of your camera.');}};
-$('delete-btn').onclick=()=>toast('Only the teacher can delete models in Supabase.');
+$('delete-btn').onclick=async()=>{
+ const entry=selected();
+ if(!entry||!editingEnabled||!online||entry.createdBy!==authUser?.id)return;
+ if(!window.confirm(`Delete “${entry.name}” from the shared city? This removes it for everyone and cannot be undone.`))return;
+ $('delete-btn').disabled=true;
+ try{
+  const {data,error}=await supabase.from('city_objects').delete().eq('id',entry.id).eq('created_by',authUser.id).select('id');
+  if(error)throw error;
+  if(!data?.length)throw new Error('Deletion was not permitted or the model was already removed.');
+  // Uploaded storage files are deliberately retained: no Storage DELETE policy is granted.
+  removeRemoteModel(entry.id);
+  toast('Model removed from the shared city.');
+ }catch(err){toast('Could not delete: '+err.message);console.error(err);updateDeleteUI();}
+};
 renderer.domElement.addEventListener('pointerdown',e=>{
  if(mode!=='build'||pointerLocked||e.button!==0||transform.dragging)return;
  const box=renderer.domElement.getBoundingClientRect();mouse.set((e.clientX-box.left)/box.width*2-1,-(e.clientY-box.top)/box.height*2+1);ray.setFromCamera(mouse,camera);
@@ -301,7 +333,7 @@ renderer.domElement.addEventListener('pointerdown',e=>{
 $('save-btn').onclick=async()=>{if(!editingEnabled)return;saveShared();toast('Placement queued for saving to shared city.');};
 $('export-btn').onclick=()=>{const data={format:'pink-lorax-layout-v1',saved:new Date().toISOString(),note:'Transforms only. OBJ and MTL files are not included.',models:[...added.values()].map(e=>{const {objText,mtlText,...meta}=serialize(e);return meta;})};const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='pink-lorax-city-layout.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);};
 
-function showTab(next){releaseFly();mode=next;document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('selected',b.dataset.tab===mode));$('explore-panel').classList.toggle('hidden',mode!=='explore');$('build-panel').classList.toggle('hidden',mode!=='build');$('mode-label').textContent=mode==='explore'?'Explore mode':'Build mode';transform.enabled=mode==='build'&&editingEnabled;transformHelper.visible=mode==='build'&&editingEnabled&&!!selected();updatePlacementUI();$('crosshair').style.display='none';$('hint').textContent=mode==='explore'?'Click Enter flythrough to fly around':'Select an imported object to move, rotate, or resize it';}
+function showTab(next){releaseFly();mode=next;document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('selected',b.dataset.tab===mode));$('explore-panel').classList.toggle('hidden',mode!=='explore');$('build-panel').classList.toggle('hidden',mode!=='build');$('mode-label').textContent=mode==='explore'?'Explore mode':'Build mode';showTransformHandles();updateDeleteUI();updatePlacementUI();$('crosshair').style.display='none';$('hint').textContent=mode==='explore'?'Click Enter flythrough to fly around':'Select an imported object to move, rotate, or resize it';}
 document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>showTab(b.dataset.tab));
 $('start-btn').onclick=startFly;$('reset-btn').onclick=resetView;$('overview-btn').onclick=overview;
 $('speed').oninput=e=>$('speed-value').textContent=`${e.target.value}×`;

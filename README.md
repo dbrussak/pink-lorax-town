@@ -1,50 +1,27 @@
-# Pink Lorax Town — City Explorer (prototype)
+# Pink Lorax Town — collaborative prototype V5
 
-A browser-based viewer using your original `tinker.obj` + `obj.mtl`, plus a local model placement editor.
+This GitHub Pages website now uses Supabase anonymous browser sessions, Storage, Postgres and Realtime.
 
-## What already works
+- Everyone with the URL can explore the base city and view shared models.
+- While `city_settings.editing_enabled` is true, any visitor with an anonymous session can upload OBJ/MTL files and move/rotate/resize **any** contributed model.
+- Files are saved to the private `city-models` storage bucket under `<auth.uid()>/<uuid>.obj` and `.mtl`.
+- Shared transforms are stored in `city_objects`; other browsers receive changes via Postgres Realtime. A tab refocus also resyncs models.
+- The original `assets/tinker.obj` city cannot be edited. No deletion UI; teacher can delete database rows in Supabase.
 
-- Loads your existing colored Tinkercad city automatically.
-- Flythrough: W/A/S/D; mouse look after **Enter flythrough**; Space rises, Shift descends, Esc releases mouse.
-- **Overview** and **Reset view** controls.
-- **Build** mode imports a student's `.obj` and optional `.mtl` files together.
-- Select an added object, then move, rotate or scale it using the handles, direct X/Y/Z/rotation/scale inputs, or nudge arrows. The original city is locked.
-- Autosaves uploaded object data and transforms to **this browser's IndexedDB**. A separate button exports layout transforms as JSON.
+## Publish
+Upload **all files from this directory** to your GitHub Pages repository, or just replace `index.html`, `app.js`, `style.css` if assets already match. GitHub Pages redeploys automatically after commit.
 
-## Important limitations
+## Important teacher setup / security
+1. Leave `city_settings.editing_enabled = false` until class begins.
+2. Run the `supabase_permissions_v5.sql` migration from your Supabase SQL editor **before classroom use**. This tightens model-path and author validation and enforces immutable model identity; it also handles repeat deploys safely.
+3. Confirm anonymous sign-ins are enabled and Supabase Realtime includes `city_objects` (and ideally `city_settings`). You already enabled the city_objects publication.
+4. To start class: `update public.city_settings set editing_enabled=true,updated_at=now() where id=1;` Reverse to false at the end.
+5. Anyone who finds the website can edit while the switch is ON; this is not strictly class-only access. Consider a class code or authenticated teacher-gated sessions for sensitive deployments. Monitor storage usage and retain city backups.
+6. Requires network access to `cdn.jsdelivr.net` and Supabase. OBJ+MTL material colors are supported; external texture images are not.
+7. The app uses latest-write-wins for overlapping edits: no temporary locks yet. Don’t let two students drag the same model simultaneously.
 
-This is **version 1: a working local prototype, not yet a shared collaborative app**. Other students will not see changes until a database and shared model storage service (e.g. Supabase) are connected.
-
-- Uploads are stored in the browser that uploaded them; clearing site data removes them.
-- No authentication, per-student permissions, live synchronization, edit locks or rollback are implemented yet.
-- Textures using external image files (`map_Kd`) are not supported by this prototype; material *colors* in MTL (`Kd`) are supported.
-- Collision with buildings is intentionally disabled to make flying easy.
-- The model has ~231,000 faces, so initial OBJ loading may take some seconds on slower Chromebooks.
-
-## Publish using your GitHub account
-
-1. Create a public GitHub repository, e.g. `pink-lorax-town`.
-2. Upload the *contents* of this folder (not the folder itself), keeping `index.html`, `app.js`, `style.css` and `assets/` at the repository root.
-3. In your repository, go to **Settings → Pages → Build and deployment → Deploy from a branch**. Select `main` and `/(root)` and save.
-4. Visit `https://YOUR-USERNAME.github.io/pink-lorax-town/` after Pages deploys.
-5. Open the link on a Chromebook in Chrome. No extension required.
-
-GitHub Pages serves static files only. A local double-click on `index.html` may fail because browsers usually block module imports and local OBJ fetches. To test locally, run a server, for example `python -m http.server 8000` from this directory and visit `http://localhost:8000`.
-
-**Note:** This prototype imports Three.js modules from jsDelivr and Google Fonts from Google. The school network needs to allow `cdn.jsdelivr.net`. If the CDN is blocked, the Three.js dependencies can be bundled locally in a later build.
-
-## Next: near-real-time collaboration
-
-Add Supabase Storage for student files, database records for positions/rotations/scales, and Realtime subscriptions to update models when another student saves. Use authenticated student identities with server-side Row Level Security and Storage policies. Add editing locks / change history for conflicts. Do not make public unrestricted write policies or embed a Supabase service-role key in this website.
-
-OBJ files exported by Tinkercad commonly have Z as up. The application rotates OBJ models to the browser's Y-up coordinate system automatically.
-
-## Updating from the earlier GitHub Pages prototype
-
-Replace **index.html**, **app.js** and **style.css** in the GitHub repository with the updated files. The city files in `assets/` are unchanged. Import a model under Build and use the numeric position fields or nudge arrows; **Focus camera on selected model** helps locate it. Changes are still saved locally, not shared with other students.
-
-## Version 3: vertical positioning
-In Build mode, select an imported model and click **Raise** or **Lower** to move it along the vertical (Three.js Y) axis. These buttons share the Movement per click increment and save automatically. The existing compass pad still moves across the ground plane.
-
-
-V4 fix: transform gizmo only appears in Build mode; hidden while flying/exploring, without losing model selection.
+## Limitations
+- No delete button for students; teacher may delete records using Supabase dashboard (uploaded blobs remain until cleaned manually).
+- OBJ models are centered and oriented for the viewer. Every imported object is standalone.
+- Initial load can be slow on low-powered Chromebooks. Changes save at the end of a gizmo drag or on field/button edits.
+- No robust server-side malware/content inspection; the app and storage restrict extensions/size, but text OBJ can still be huge or malformed.

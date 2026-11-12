@@ -13,3 +13,5 @@
 /* Raise/lower the selected model along the vertical Y axis */
 .height-nudge {display:flex;gap:8px;margin:4px 0 12px}
 .height-nudge .button {flex:1;min-height:40px}
+
+#connection-state{font-size:11px;color:#a4c8d3;padding:3px 7px}#edit-status{font-size:11px;font-weight:800;color:#b9c4d3;border:1px solid #798298;border-radius:6px;padding:5px 7px;white-space:nowrap}#edit-status.live{color:#64efb0;border-color:#369a6f}.upload:has(+input:disabled){opacity:.45;pointer-events:none}

@@ -89,7 +89,11 @@ function applyRemoteTransform(entry,record){
 }
 async function loadRecord(record){
  if(!record?.id||!record.model_path)return;
- if(added.has(record.id)){applyRemoteTransform(added.get(record.id),record);return;}
+ if(added.has(record.id)){
+  const entry=added.get(record.id);
+  if(entry.name!==record.name){entry.name=record.name;updateObjectUI();}
+  applyRemoteTransform(entry,record);return;
+ }
  if(remoteQueue.has(record.id))return;
  remoteQueue.add(record.id);
  try{
@@ -344,6 +348,7 @@ function updateDeleteUI(){
  const entry=selected();
  const allowed=mode==='build'&&canDeleteEntry(entry);
  $('delete-btn').disabled=!allowed;
+ $('rename-btn').disabled=!(mode==='build'&&online&&teacherAuthorized&&teacherMode&&!!entry);
  $('delete-btn').textContent=teacherMode&&teacherAuthorized?'Delete selected model':'Delete my model';
  $('delete-btn').title=allowed?'Remove selected model from shared city': 'Only a verified teacher or the uploader during class may delete';
 }
@@ -483,6 +488,24 @@ function applyAxis(){if(transform.getMode()==='rotate'){transform.showX=false;tr
 $('show-handles-btn').onclick=()=>{showTransformHandles();if(selected()){setTool('translate');focusModel();toast('Movement handles restored.');}else toast('Select an imported model first.');};
 $('tool-move').onclick=()=>setTool('translate');$('tool-rotate').onclick=()=>setTool('rotate');$('tool-scale').onclick=()=>setTool('scale');$('axis-select').onchange=applyAxis;
 $('object-select').onchange=e=>selectObject(e.target.value);
+$('rename-btn').onclick=async()=>{
+ const entry=selected();
+ if(!entry||!online||!teacherAuthorized||!teacherMode)return;
+ const proposed=window.prompt('New display name for this model:',entry.name);
+ if(proposed===null)return;
+ const name=proposed.trim();
+ if(!name||name.length>100){toast('Enter a model name between 1 and 100 characters.');return;}
+ if(name===entry.name)return;
+ const button=$('rename-btn');button.disabled=true;
+ try{
+  const {data,error}=await supabase.rpc('rename_city_object',{p_object_id:entry.id,p_new_name:name});
+  if(error)throw error;
+  if(data!==true)throw new Error('Rename was not permitted.');
+  entry.name=name;updateObjectUI();
+  toast('Model renamed. The new name will appear for everyone.');
+ }catch(e){console.error(e);toast('Rename failed: '+e.message);}
+ finally{updateDeleteUI();}
+};
 $('objects-list').onclick=e=>{const item=e.target.closest('[data-id]');if(item)selectObject(item.dataset.id);};
 $('place-btn').onclick=()=>{const e=selected();if(e&&canModify()){positionInFront(e.group);updatePlacementUI();saveShared();focusModel(e);toast('Model moved in front of your camera.');}};
 $('delete-btn').onclick=async()=>{

@@ -88,3 +88,14 @@ Choose Build -> Scale, then drag left/right directly on any contributed model. A
 - Rotation handles are restricted to world vertical (Y), matching saved `rotation_y`.
 - Uniform scale drag (V11), navigation, and Supabase storage and sync remain unchanged.
 - Update GitHub `app.js` and `index.html` only. No database changes.
+
+
+## V13: Teacher rename + edit even while class editing is OFF
+- Run `supabase_teacher_rename_v13.sql` in the Supabase SQL Editor.
+- Existing verified teachers can edit/delete contributed structures regardless of `city_settings.editing_enabled`.
+- Teacher Mode now has a `Rename selected model` button in Build mode.
+- Renames change only the display name in `city_objects.name`, **not** the OBJ or MTL filenames.
+- Rename updates propagate to other open browsers via Supabase Realtime.
+- The original single-OBJ baseline remains locked.
+- Student editing remains restricted to class time.
+- Update the root `index.html`, `app.js` and `style.css` on GitHub Pages. Do not replace your city `assets` folder.

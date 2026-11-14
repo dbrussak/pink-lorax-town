@@ -30,3 +30,5 @@
 
 #teacher-password{width:100%;margin:9px 0 15px;padding:12px;border:1px solid #62607a;border-radius:8px;background:#181b2c;color:#fff}
 .scale-controls{display:flex;gap:8px;margin-top:8px}.scale-controls .button{flex:1}
+
+#rename-btn{margin:-10px 0 14px;border-color:#795477;color:#ffe5f0;text-align:center}

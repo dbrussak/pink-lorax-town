@@ -85,7 +85,7 @@ function applyRemoteTransform(entry,record){
  g.position.set(record.position_x,record.position_y,record.position_z);
  g.rotation.y=record.rotation_y;
  g.scale.setScalar(record.scale);
- if(selectedId===entry.id)updatePlacementUI();
+ if(selectedId===entry.id){syncHandlePivot();updatePlacementUI();}
 }
 async function loadRecord(record){
  if(!record?.id||!record.model_path)return;
@@ -277,9 +277,49 @@ transform.setMode('translate');transform.setSpace('world');transform.setSize(1.1
 const transformHelper = transform.getHelper();
 scene.add(transformHelper);
 transformHelper.visible = false;
-transform.addEventListener('dragging-changed',e=>{if(e.value)releaseFly();});
-transform.addEventListener('mouseUp',()=>saveShared());
-transform.addEventListener('objectChange',()=>updatePlacementUI());
+// Independent world-space handle anchor: keep the model's own origin and saved
+// position unchanged. OBJ exports often have pivots far from visible geometry.
+const handlePivot = new THREE.Group();
+scene.add(handlePivot);
+let handlePrevious = null;
+let handleOffset = 4;
+const verticalAxis = new THREE.Vector3(0,1,0);
+function boundingHandlePosition(entry){
+ entry.group.updateMatrixWorld(true);
+ const bounds=new THREE.Box3().setFromObject(entry.group);
+ if(bounds.isEmpty())return entry.group.getWorldPosition(new THREE.Vector3());
+ const center=bounds.getCenter(new THREE.Vector3());
+ return new THREE.Vector3(center.x,bounds.max.y+handleOffset,center.z);
+}
+function syncHandlePivot(){
+ const entry=selected();
+ if(!entry||transform.dragging)return;
+ handlePivot.position.copy(boundingHandlePosition(entry));
+ handlePivot.rotation.set(0,entry.group.rotation.y,0);
+ handlePivot.updateMatrixWorld(true);
+ handlePrevious={position:handlePivot.position.clone(),yaw:handlePivot.rotation.y};
+}
+transform.addEventListener('dragging-changed',e=>{
+ if(e.value){releaseFly();syncHandlePivot();}
+ else {syncHandlePivot();}
+});
+transform.addEventListener('mouseUp',()=>{syncHandlePivot();saveShared();});
+transform.addEventListener('objectChange',()=>{
+ const entry=selected();if(!entry||!handlePrevious)return;
+ if(transform.getMode()==='translate'){
+   entry.group.position.add(handlePivot.position.clone().sub(handlePrevious.position));
+ }else if(transform.getMode()==='rotate'){
+   // Rotation is restricted to world Y: this matches the database's rotation_y.
+   let delta=handlePivot.rotation.y-handlePrevious.yaw;
+   delta=Math.atan2(Math.sin(delta),Math.cos(delta));
+   if(delta){
+     entry.group.position.sub(handlePivot.position).applyAxisAngle(verticalAxis,delta).add(handlePivot.position);
+     entry.group.rotation.y+=delta;
+   }
+ }
+ handlePrevious={position:handlePivot.position.clone(),yaw:handlePivot.rotation.y};
+ updatePlacementUI();
+});
 let uniformScaleTool=false;
 let scaleDrag=null; // Pointer-drag operation: size only, never translation.
 
@@ -288,13 +328,16 @@ function selected(){return selectedId?added.get(selectedId):null;}
 function showTransformHandles(){
  const entry=selected();
  const canShow=mode==='build'&&canModify()&&!!entry&&!uniformScaleTool;
- if(canShow && transform.object!==entry.group)transform.attach(entry.group);
+ if(canShow){
+   if(transform.object!==handlePivot)transform.attach(handlePivot);
+   syncHandlePivot();
+ }
  transform.enabled=canShow;
  transformHelper.visible=canShow;
 }
 function selectObject(id){
  selectedId=id&&added.has(id)?id:null;
- if(!selected())transform.detach();
+ if(!selected()){transform.detach();handlePrevious=null;}
  showTransformHandles();updateObjectUI();
 }
 function updateDeleteUI(){
@@ -316,6 +359,7 @@ function updateObjectUI(){
 // Direct placement controls are an accessible fallback to dragging 3D transform handles.
 const placementFieldIds=['edit-x','edit-y','edit-z','edit-rotation','edit-scale'];
 function updatePlacementUI(){
+ syncHandlePivot();
  const e=selected();
  $('placement-controls').classList.toggle('disabled-placement',!e||!canModify());
  for(const id of placementFieldIds)$(id).disabled=!e||!canModify();
@@ -372,6 +416,12 @@ function focusModel(entry=selected()){
  toast('Selected model centered. Use Move handles, number fields, or arrow buttons.');
 }
 $('focus-btn').onclick=()=>focusModel();
+$('handle-offset').addEventListener('change',()=>{
+ const value=Number($('handle-offset').value);
+ if(!Number.isFinite(value)||value<0||value>500){toast('Handle offset must be between 0 and 500.');$('handle-offset').value=handleOffset;return;}
+ handleOffset=value;
+ syncHandlePivot();
+});
 // Place a new object where the camera is aiming at the city's ground plane.
 // New-world models are normalized so their lowest vertex starts at local Y=0;
 // after scaling, world-space group Y=0 therefore puts the base flush with ground.
@@ -429,7 +479,7 @@ function setTool(tool){
  renderer.domElement.style.cursor=uniformScaleTool?'ew-resize':'';
  if(uniformScaleTool)toast('Uniform Scale: drag left/right on a model. Hold Shift for fine adjustment.');
 }
-function applyAxis(){if(transform.getMode()!=='translate'){transform.showX=true;transform.showY=true;transform.showZ=true;return;}const all=$('axis-select').value==='XYZ';transform.showX=true;transform.showY=all;transform.showZ=true;}
+function applyAxis(){if(transform.getMode()==='rotate'){transform.showX=false;transform.showY=true;transform.showZ=false;return;}const all=$('axis-select').value==='XYZ';transform.showX=true;transform.showY=all;transform.showZ=true;}
 $('show-handles-btn').onclick=()=>{showTransformHandles();if(selected()){setTool('translate');focusModel();toast('Movement handles restored.');}else toast('Select an imported model first.');};
 $('tool-move').onclick=()=>setTool('translate');$('tool-rotate').onclick=()=>setTool('rotate');$('tool-scale').onclick=()=>setTool('scale');$('axis-select').onchange=applyAxis;
 $('object-select').onchange=e=>selectObject(e.target.value);

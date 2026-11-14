@@ -80,3 +80,11 @@ See TEACHER_SETUP.txt and supabase_teacher_mode_v9.sql. Teacher email/password i
 ## V11: Uniform drag scaling
 
 Choose Build -> Scale, then drag left/right directly on any contributed model. All three axes scale together; holding Shift makes the gesture finer. The existing +/- buttons and Uniform size field still work. Release the pointer to save the scale in Supabase. This avoids TransformControls axis handles misbehaving as translation. The locked original city cannot be resized. No SQL changes.
+
+
+## V12 editing handle fix
+- Move/rotate gizmos attach to a separate pivot positioned at the top-center of the selected model's visible bounding box, not its exported OBJ origin.
+- Use **Handle clearance above model** to raise the handles without moving the model. Default is 4 world units.
+- Rotation handles are restricted to world vertical (Y), matching saved `rotation_y`.
+- Uniform scale drag (V11), navigation, and Supabase storage and sync remain unchanged.
+- Update GitHub `app.js` and `index.html` only. No database changes.

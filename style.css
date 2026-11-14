@@ -21,3 +21,12 @@
 .height-caption{font-size:10px;font-weight:800;letter-spacing:.1em;color:#ffd1e8;margin-bottom:5px}
 .height-quick-controls .height-nudge{margin:0 0 10px}
 .height-quick-controls .button{font-size:13px}
+
+/* Teacher-only editing UI; authorization is checked by the Supabase server. */
+.teacher-panel{border:1px solid #735375;border-radius:10px;background:#2d2435;padding:12px;margin:8px 0 15px}.teacher-panel strong{font-size:12px}.teacher-panel p{margin:7px 0;font-size:11px}.teacher-panel button{margin-top:5px}
+#teacher-email{width:100%;margin-top:9px;padding:12px;border:1px solid #62607a;border-radius:8px;background:#181b2c;color:white}
+#teacher-dialog .modal-card{width:min(430px,92vw)}
+@media(max-width:850px){.topbar{height:auto;min-height:66px;flex-wrap:wrap;padding:8px 12px}.top-actions{flex-wrap:wrap}main{height:calc(100% - 92px)}}
+
+#teacher-password{width:100%;margin:9px 0 15px;padding:12px;border:1px solid #62607a;border-radius:8px;background:#181b2c;color:#fff}
+.scale-controls{display:flex;gap:8px;margin-top:8px}.scale-controls .button{flex:1}

@@ -62,3 +62,21 @@ Replace `index.html` and `app.js` in GitHub and commit. `style.css`, the
 existing `assets/`, and Supabase SQL policies are unchanged. ZIP includes
 all project files for a full redeployment as well. This build was syntax
 checked but has not been tested against your live GitHub/Supabase site.
+
+
+## V9 — Teacher Mode and uniform scaling
+See TEACHER_SETUP.txt and supabase_teacher_mode_v9.sql. Teacher email/password is checked by Supabase Auth; class students remain anonymous. The original baseline remains locked. Uniform scaling is performed with the size field or +/- buttons (no deceptive per-axis gizmo).
+
+
+## V10: Direct Tinkercad ZIP imports and descriptive filenames
+
+- Upload one `.zip` exported by Tinkercad containing a single OBJ and an optional MTL, **or** select OBJ + MTL together. Nested folders are supported. The ZIP is unpacked in the browser; the OBJ and MTL are stored separately in Supabase.
+- Optional **What did you make?** text field: enter a short description such as `Dinosaur`. The stored file names become `dinosaur_<unique-code>.obj` and `.mtl`. The database model ID remains a UUID, and `.mtl` naming tracks the `.obj`.
+- With a generic Tinkercad export name such as `tinker.obj` and no description, the default name is `model_<unique-code>`. Automatically identifying the object from the geometry is not implemented.
+- Model ZIPs are limited to 25 MB compressed, and the extracted OBJ/MTL files are limited to 20 MB each. A ZIP containing multiple OBJ or MTL files is rejected rather than silently choosing the wrong file.
+- No database migrations or Supabase policy changes are needed. Replace `index.html` and `app.js` in GitHub Pages; keep `style.css` and `assets/`.
+
+
+## V11: Uniform drag scaling
+
+Choose Build -> Scale, then drag left/right directly on any contributed model. All three axes scale together; holding Shift makes the gesture finer. The existing +/- buttons and Uniform size field still work. Release the pointer to save the scale in Supabase. This avoids TransformControls axis handles misbehaving as translation. The locked original city cannot be resized. No SQL changes.

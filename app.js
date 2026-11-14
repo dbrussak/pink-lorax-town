@@ -10,14 +10,37 @@ const SB_URL = 'https://xpldpzhujfdsnhxgirof.supabase.co';
 const SB_KEY = 'sb_publishable_QaE7NRUJCI36xpkaKErwUA_wyt-y8Yd';
 const supabase = createClient(SB_URL, SB_KEY, {auth:{autoRefreshToken:true,persistSession:true}});
 let authUser=null, editingEnabled=false, online=false, loadingShared=false;
+let teacherAuthorized=false, teacherMode=false;
+function canModify(){return online && (editingEnabled || (teacherAuthorized && teacherMode));}
+function canDeleteEntry(entry){return !!entry && online && ((teacherAuthorized && teacherMode) || (editingEnabled && entry.createdBy===authUser?.id));}
+function showTeacherStatus(){
+ const status=$('teacher-status');
+ status.textContent=teacherAuthorized ? (teacherMode ? 'TEACHER MODE ON' : 'Teacher verified') : 'Student / visitor';
+ $('teacher-toggle').textContent=teacherAuthorized ? (teacherMode ? 'Exit Teacher Mode' : 'Enter Teacher Mode') : 'Teacher login';
+ $('teacher-signout').classList.toggle('hidden',!teacherAuthorized);
+ $('teacher-help').textContent=teacherAuthorized ? 'Verified teacher. Enable Teacher Mode to edit or delete any contributed structure, even outside class.' : 'Teachers use their Supabase email and password; students still join without a login.';
+}
+function updateTeacherControls(){
+ showTeacherStatus();
+ setEditing(editingEnabled);
+}
+async function readTeacherPermission(){
+ if(!online)return;
+ const {data,error}=await supabase.rpc('is_city_teacher');
+ teacherAuthorized=!error && data === true;
+ teacherMode=teacherAuthorized && teacherMode;
+ if(error)console.error('Teacher authorization check failed',error);
+ showTeacherStatus();
+}
+
 const remoteQueue=new Set();
 function showConnection(msg){$('connection-state').textContent=msg;}
 function setEditing(enabled){
  editingEnabled=!!enabled;
- const permitted=editingEnabled&&online;
+ const permitted=canModify();
  $('model-files').disabled=!permitted;
- $('build-note').textContent=permitted ? 'Class editing is ON — uploads and placement changes are shared.' : 'Class editing is OFF — you can explore and inspect existing models.';
- $('edit-status').textContent=permitted?'CLASS EDITING ON':'VIEW ONLY';
+ $('build-note').textContent=teacherMode&&teacherAuthorized ? 'Teacher Mode — you can edit or remove any added model, including when class editing is OFF.' : (permitted ? 'Class editing is ON — uploads and placement changes are shared.' : 'Class editing is OFF — you can explore and inspect existing models.');
+ $('edit-status').textContent=teacherMode&&teacherAuthorized?'TEACHER EDITING':permitted?'CLASS EDITING ON':'VIEW ONLY';
  $('edit-status').classList.toggle('live',permitted);
  $('save-btn').disabled=!permitted;
  $('place-btn').disabled=!permitted||!selected();
@@ -31,7 +54,7 @@ async function initSupabase(){
  try{
   let {data:{session},error}=await supabase.auth.getSession(); if(error)throw error;
   if(!session){const response=await supabase.auth.signInAnonymously();if(response.error)throw response.error;session=response.data.session;}
-  authUser=session.user;online=true;showConnection('Connected to shared city');
+  authUser=session.user;online=true;await readTeacherPermission();showConnection('Connected to shared city');
   const {error:readError}=await refreshSettings();if(readError)throw readError;
   await syncAllModels();
   supabase.channel('pink-lorax-city-live')
@@ -42,7 +65,7 @@ async function initSupabase(){
    .on('postgres_changes',{event:'*',schema:'public',table:'city_settings'},()=>refreshSettings())
    .subscribe(status=>{showConnection(status==='SUBSCRIBED'?'Shared city connected':'Shared city: '+status);if(status==='SUBSCRIBED')syncAllModels();});
   // Recover after backgrounding Chromebook / dropped websocket; also detect teacher switch.
-  window.addEventListener('focus',async()=>{await refreshSettings();await syncAllModels();});
+  window.addEventListener('focus',async()=>{await readTeacherPermission();await refreshSettings();await syncAllModels();});
  }catch(e){online=false;setEditing(false);showConnection('Connection failed');toast('Supabase connection failed: '+e.message);console.error(e);}
 }
 async function refreshSettings(){
@@ -101,7 +124,7 @@ async function refreshOneModel(id){
 function removeRemoteModel(id){const entry=added.get(id);if(!entry)return;scene.remove(entry.group);added.delete(id);if(selectedId===id)selectObject(null);else updateObjectUI();showTransformHandles();}
 const saves=new Map();
 function saveShared(){
- if(!editingEnabled||!online)return;
+ if(!canModify())return;
  const entry=selected();if(!entry?.modelPath)return;
  const id=entry.id;
  clearTimeout(saves.get(id));
@@ -112,24 +135,73 @@ function saveShared(){
   }catch(e){toast('Could not save placement: '+e.message);console.error(e);await refreshOneModel(id);}
  },230));
 }
+// Store human-readable filenames while retaining UUID object IDs in the database.
+// Client-generated names are NOT security boundaries; Storage policies still isolate users.
+function cleanModelLabel(value){
+ return String(value||'').normalize('NFKD').replace(/[\u0300-\u036f]/g,'')
+  .toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'').slice(0,40);
+}
+function suggestedModelLabel(fileName){
+ const base=String(fileName||'').split('/').pop().replace(/\.(obj|zip)$/i,'');
+ const clean=cleanModelLabel(base);
+ return /^(tinker|model|untitled|obj|export|design|shape|object|scene)(?:_?\d+)?$/.test(clean)?'model':clean||'model';
+}
+function uniqueModelSuffix(){
+ const values=new Uint8Array(5);crypto.getRandomValues(values);
+ return [...values].map(x=>x.toString(36).padStart(2,'0')).join('').slice(0,10);
+}
 async function uploadShared(name,objText,mtlText){
- if(!editingEnabled||!online||!authUser)throw new Error('Class editing is off.');
+ if(!canModify()||!authUser)throw new Error('Editing is not enabled for this session.');
  if(new Blob([objText]).size>20*1024*1024||new Blob([mtlText]).size>20*1024*1024)throw new Error('File exceeds the 20 MB limit.');
- const id=crypto.randomUUID(), stem=`${authUser.id}/${id}`;
+ if(!/^(?:\s|#|mtllib\s+[^\r\n]*\n)*[vofgs]\s/m.test(objText))throw new Error('The selected OBJ does not look like a valid mesh file.');
+ const id=crypto.randomUUID(), slug=cleanModelLabel(name)||'model';
+ const stem=`${authUser.id}/${slug}_${uniqueModelSuffix()}`;
  const objPath=`${stem}.obj`;
- const upload=async(ext,text)=>{
-  const {error}=await supabase.storage.from('city-models').upload(`${stem}.${ext}`,new Blob([text],{type:'text/plain'}),{upsert:false,contentType:'text/plain'});
+ const upload=async(ext,body)=>{
+  const {error}=await supabase.storage.from('city-models').upload(`${stem}.${ext}`,new Blob([body],{type:'text/plain'}),{upsert:false,contentType:'text/plain'});
   if(error)throw error;
  };
  await upload('obj',objText);
  if(mtlText)await upload('mtl',mtlText);
- // Publish only after all necessary files are uploaded. Orphan files can be cleaned by the teacher.
+ // Publish only after both uploads succeed. Partial orphan files can be cleaned by teacher.
  const idLocal=await addModel(name,objText,mtlText,id,null,{remote:true,modelPath:objPath});
  const entry=added.get(idLocal);entry.createdBy=authUser.id;updateDeleteUI();
  const payload={id,name,model_path:objPath,created_by:authUser.id,...serializeTransform(entry)};
  const {error}=await supabase.from('city_objects').insert(payload);
  if(error){removeRemoteModel(idLocal);throw error;}
  toast('Model published to shared city');
+ return objPath;
+}
+
+const MAX_MODEL_BYTES=20*1024*1024;
+const MAX_ZIP_BYTES=25*1024*1024;
+async function readTinkercadUpload(files){
+ const zips=files.filter(f=>/\.zip$/i.test(f.name));
+ const loose=files.filter(f=>/\.(obj|mtl)$/i.test(f.name));
+ if(zips.length){
+  if(zips.length!==1||loose.length||files.length!==1)throw new Error('Select one ZIP at a time, or select an OBJ and MTL together.');
+  const archive=zips[0];
+  if(archive.size>MAX_ZIP_BYTES)throw new Error('ZIP is too large (maximum 25 MB).');
+  const zip=await JSZip.loadAsync(archive,{checkCRC32:true});
+  const entries=Object.values(zip.files).filter(e=>!e.dir&&!e.name.split('/').some(part=>part==='__MACOSX'||part.startsWith('.')));
+  const objs=entries.filter(e=>/\.obj$/i.test(e.name));
+  const mtls=entries.filter(e=>/\.mtl$/i.test(e.name));
+  if(objs.length!==1)throw new Error(`Expected one OBJ file in the ZIP; found ${objs.length}.`);
+  if(mtls.length>1)throw new Error('ZIP contains multiple MTL files. Export only one Tinkercad model.');
+  const objEntry=objs[0],mtlEntry=mtls[0];
+  for(const e of [objEntry,mtlEntry].filter(Boolean)){
+   if(e._data?.uncompressedSize>MAX_MODEL_BYTES)throw new Error('An extracted model file exceeds 20 MB.');
+  }
+  const objText=await objEntry.async('string');
+  const mtlText=mtlEntry?await mtlEntry.async('string'):'';
+  if(new Blob([objText]).size>MAX_MODEL_BYTES||new Blob([mtlText]).size>MAX_MODEL_BYTES)throw new Error('Extracted model file exceeds 20 MB.');
+  return {objText,mtlText,originalName:objEntry.name.split('/').pop(),fromZip:true};
+ }
+ const objs=loose.filter(f=>/\.obj$/i.test(f.name));
+ const mtls=loose.filter(f=>/\.mtl$/i.test(f.name));
+ if(objs.length!==1||mtls.length>1||loose.length!==files.length)throw new Error('Select exactly one OBJ and, optionally, one MTL.');
+ if(objs[0].size>MAX_MODEL_BYTES||(mtls[0]&&mtls[0].size>MAX_MODEL_BYTES))throw new Error('Model file exceeds 20 MB.');
+ return {objText:await objs[0].text(),mtlText:mtls[0]?await mtls[0].text():'',originalName:objs[0].name,fromZip:false};
 }
 
 const viewport = $('viewport');
@@ -208,11 +280,14 @@ transformHelper.visible = false;
 transform.addEventListener('dragging-changed',e=>{if(e.value)releaseFly();});
 transform.addEventListener('mouseUp',()=>saveShared());
 transform.addEventListener('objectChange',()=>updatePlacementUI());
+let uniformScaleTool=false;
+let scaleDrag=null; // Pointer-drag operation: size only, never translation.
+
 
 function selected(){return selectedId?added.get(selectedId):null;}
 function showTransformHandles(){
  const entry=selected();
- const canShow=mode==='build'&&editingEnabled&&online&&!!entry;
+ const canShow=mode==='build'&&canModify()&&!!entry&&!uniformScaleTool;
  if(canShow && transform.object!==entry.group)transform.attach(entry.group);
  transform.enabled=canShow;
  transformHelper.visible=canShow;
@@ -224,9 +299,10 @@ function selectObject(id){
 }
 function updateDeleteUI(){
  const entry=selected();
- const own=!!entry&&!!authUser&&entry.createdBy===authUser.id;
- $('delete-btn').disabled=!(mode==='build'&&editingEnabled&&online&&own);
- $('delete-btn').title=own?'Remove your uploaded model from the shared city':'Only the uploader can delete their model during class';
+ const allowed=mode==='build'&&canDeleteEntry(entry);
+ $('delete-btn').disabled=!allowed;
+ $('delete-btn').textContent=teacherMode&&teacherAuthorized?'Delete selected model':'Delete my model';
+ $('delete-btn').title=allowed?'Remove selected model from shared city': 'Only a verified teacher or the uploader during class may delete';
 }
 
 function updateObjectUI(){
@@ -234,17 +310,18 @@ function updateObjectUI(){
  $('object-select').value=selectedId||'';
  $('object-count').textContent=added.size;
  $('objects-list').innerHTML=added.size?[...added.values()].map(e=>`<div class="object-item ${selectedId===e.id?'selected':''}" data-id="${escapeHtml(e.id)}"><span>${escapeHtml(e.name)}</span><small>●</small></div>`).join(''):'<div class="empty">No models added yet.</div>';
- updateDeleteUI();$('place-btn').disabled=!editingEnabled||!selected();
+ updateDeleteUI();$('place-btn').disabled=!canModify()||!selected();
  updatePlacementUI();
 }
 // Direct placement controls are an accessible fallback to dragging 3D transform handles.
 const placementFieldIds=['edit-x','edit-y','edit-z','edit-rotation','edit-scale'];
 function updatePlacementUI(){
  const e=selected();
- $('placement-controls').classList.toggle('disabled-placement',!e||!editingEnabled);
- for(const id of placementFieldIds)$(id).disabled=!e||!editingEnabled;
- for(const id of ['nudge-left','nudge-right','nudge-forward','nudge-back','nudge-up','nudge-down'])$(id).disabled=!e||!editingEnabled;
+ $('placement-controls').classList.toggle('disabled-placement',!e||!canModify());
+ for(const id of placementFieldIds)$(id).disabled=!e||!canModify();
+ for(const id of ['nudge-left','nudge-right','nudge-forward','nudge-back','nudge-up','nudge-down'])$(id).disabled=!e||!canModify();
  $('focus-btn').disabled=!e;
+ for(const id of ['scale-plus','scale-minus'])$(id).disabled=!e||!canModify();
  if(!e)return;
  const group=e.group;
  // Keep the active field intact while somebody types.
@@ -252,7 +329,7 @@ function updatePlacementUI(){
  for(const [id,value] of Object.entries(values))if(document.activeElement!==$(id))$(id).value=Number(value.toFixed(3));
 }
 function applyPlacementFields(){
- const entry=selected();if(!entry||!editingEnabled)return;
+ const entry=selected();if(!entry||!canModify())return;
  const get=(id,fallback)=>{const str=$(id).value;return str.trim()===''?fallback:Number(str);};
  const g=entry.group;
  const x=get('edit-x',g.position.x),y=get('edit-y',g.position.y),z=get('edit-z',g.position.z);
@@ -263,14 +340,24 @@ function applyPlacementFields(){
  updatePlacementUI();saveShared();
 }
 for(const id of placementFieldIds)$(id).addEventListener('change',applyPlacementFields);
-function nudge(dx,dz){const e=selected();if(!e||!editingEnabled)return;const step=Number($('nudge-step').value)||20;e.group.position.x+=dx*step;e.group.position.z+=dz*step;updatePlacementUI();saveShared();}
+function changeUniformScale(factor){
+ const e=selected();if(!e||!canModify())return;
+ const current=e.group.scale.x;
+ const next=THREE.MathUtils.clamp(current*factor,0.01,100);
+ e.group.scale.setScalar(next);
+ updatePlacementUI();saveShared();
+}
+$('scale-plus').onclick=()=>changeUniformScale(1.1);
+$('scale-minus').onclick=()=>changeUniformScale(1/1.1);
+
+function nudge(dx,dz){const e=selected();if(!e||!canModify())return;const step=Number($('nudge-step').value)||20;e.group.position.x+=dx*step;e.group.position.z+=dz*step;updatePlacementUI();saveShared();}
 $('nudge-left').onclick=()=>nudge(-1,0);
 $('nudge-right').onclick=()=>nudge(1,0);
 $('nudge-forward').onclick=()=>nudge(0,-1);
 $('nudge-back').onclick=()=>nudge(0,1);
 $('nudge-up').onclick=()=>nudgeHeight(1);
 $('nudge-down').onclick=()=>nudgeHeight(-1);
-function nudgeHeight(direction){const e=selected();if(!e||!editingEnabled)return;const step=Number($('nudge-step').value)||20;e.group.position.y+=direction*step;updatePlacementUI();saveShared();}
+function nudgeHeight(direction){const e=selected();if(!e||!canModify())return;const step=Number($('nudge-step').value)||20;e.group.position.y+=direction*step;updatePlacementUI();saveShared();}
 function focusModel(entry=selected()){
  if(!entry)return;
  releaseFly();
@@ -317,34 +404,98 @@ async function addModel(name,objText,mtlText,id,transformData,options={}){
  const uuid=id||crypto.randomUUID();group.userData.modelId=uuid;scene.add(group);added.set(uuid,{id:uuid,name,objText,mtlText,group,modelPath:options.modelPath||null,createdBy:options.createdBy||null});if(options.remote&&transformData){updateObjectUI();}else{selectObject(uuid);if(!transformData&&mode==='build')toast('Model placed on the ground near your view. Use Focus to inspect or edit it.');}return uuid;
 }
 $('model-files').addEventListener('change',async event=>{
- const files=[...event.target.files];const obj=files.find(f=>f.name.toLowerCase().endsWith('.obj'));const mtl=files.find(f=>f.name.toLowerCase().endsWith('.mtl'));
- if(!obj){statusText('Please select an OBJ file.');return;}
- if(!editingEnabled){statusText('Class editing is off.');return;}
- try{statusText('Uploading to shared city…');const objText=await obj.text();const mtlText=mtl?await mtl.text():'';
-  await uploadShared(obj.name.replace(/\.obj$/i,''),objText,mtlText);statusText(`${obj.name} added to shared city.`);
+ const files=[...event.target.files];
+ if(!files.length)return;
+ if(!canModify()){statusText('Editing is off.');event.target.value='';return;}
+ try{
+  statusText('Reading Tinkercad model…');
+  const {objText,mtlText,originalName,fromZip}=await readTinkercadUpload(files);
+  const labelInput=$('model-description').value.trim();
+  const label=cleanModelLabel(labelInput)||suggestedModelLabel(originalName);
+  const displayName=label.split('_').map(s=>s.charAt(0).toUpperCase()+s.slice(1)).join(' ');
+  statusText('Uploading '+displayName+' to shared city…');
+  const path=await uploadShared(displayName,objText,mtlText);
+  statusText(`${displayName} added successfully (${path.split('/').pop()})${fromZip?' from ZIP':''}.`);
+  $('model-description').value='';
  }catch(err){statusText(`Could not upload model: ${err.message}`);console.error(err);}finally{event.target.value='';}
 });
-function setTool(tool){showTransformHandles();transform.setMode(tool);for(const [name,id] of [['translate','tool-move'],['rotate','tool-rotate'],['scale','tool-scale']])$(id).classList.toggle('active',name===tool);applyAxis();}
+function setTool(tool){
+ // A dedicated uniform scale gesture avoids TransformControls' per-axis handles
+ // and keeps the database's single scale factor consistent for X/Y/Z.
+ uniformScaleTool=tool==='scale';
+ transform.setMode(uniformScaleTool?'translate':tool);
+ for(const [name,id] of [['translate','tool-move'],['rotate','tool-rotate'],['scale','tool-scale']])$(id).classList.toggle('active',name===tool);
+ applyAxis();showTransformHandles();
+ renderer.domElement.style.cursor=uniformScaleTool?'ew-resize':'';
+ if(uniformScaleTool)toast('Uniform Scale: drag left/right on a model. Hold Shift for fine adjustment.');
+}
 function applyAxis(){if(transform.getMode()!=='translate'){transform.showX=true;transform.showY=true;transform.showZ=true;return;}const all=$('axis-select').value==='XYZ';transform.showX=true;transform.showY=all;transform.showZ=true;}
 $('show-handles-btn').onclick=()=>{showTransformHandles();if(selected()){setTool('translate');focusModel();toast('Movement handles restored.');}else toast('Select an imported model first.');};
 $('tool-move').onclick=()=>setTool('translate');$('tool-rotate').onclick=()=>setTool('rotate');$('tool-scale').onclick=()=>setTool('scale');$('axis-select').onchange=applyAxis;
 $('object-select').onchange=e=>selectObject(e.target.value);
 $('objects-list').onclick=e=>{const item=e.target.closest('[data-id]');if(item)selectObject(item.dataset.id);};
-$('place-btn').onclick=()=>{const e=selected();if(e&&editingEnabled){positionInFront(e.group);updatePlacementUI();saveShared();focusModel(e);toast('Model moved in front of your camera.');}};
+$('place-btn').onclick=()=>{const e=selected();if(e&&canModify()){positionInFront(e.group);updatePlacementUI();saveShared();focusModel(e);toast('Model moved in front of your camera.');}};
 $('delete-btn').onclick=async()=>{
  const entry=selected();
- if(!entry||!editingEnabled||!online||entry.createdBy!==authUser?.id)return;
+ if(!canDeleteEntry(entry))return;
  if(!window.confirm(`Delete “${entry.name}” from the shared city? This removes it for everyone and cannot be undone.`))return;
  $('delete-btn').disabled=true;
  try{
-  const {data,error}=await supabase.from('city_objects').delete().eq('id',entry.id).eq('created_by',authUser.id).select('id');
+  let request=supabase.from('city_objects').delete().eq('id',entry.id);
+  if(!(teacherAuthorized&&teacherMode))request=request.eq('created_by',authUser.id);
+  const {data,error}=await request.select('id');
   if(error)throw error;
   if(!data?.length)throw new Error('Deletion was not permitted or the model was already removed.');
   // Uploaded storage files are deliberately retained: no Storage DELETE policy is granted.
+  clearTimeout(saves.get(entry.id));saves.delete(entry.id);
   removeRemoteModel(entry.id);
   toast('Model removed from the shared city.');
  }catch(err){toast('Could not delete: '+err.message);console.error(err);updateDeleteUI();}
 };
+// Dragging on a contributed model in Scale mode resizes it uniformly.
+// Shift adjusts drag sensitivity for precise touchpad/mouse control.
+// The active drag is tracked separately, so no axis gizmo can translate it.
+renderer.domElement.addEventListener('pointerdown',e=>{
+ if(!uniformScaleTool||mode!=='build'||!canModify()||pointerLocked||e.button!==0)return;
+ const rect=renderer.domElement.getBoundingClientRect();
+ mouse.set((e.clientX-rect.left)/rect.width*2-1,-(e.clientY-rect.top)/rect.height*2+1);
+ ray.setFromCamera(mouse,camera);
+ const hit=ray.intersectObjects([...added.values()].map(o=>o.group),true)[0];
+ if(!hit)return;
+ let node=hit.object;
+ while(node.parent&&!node.userData.modelId)node=node.parent;
+ if(!node.userData.modelId)return;
+ if(selectedId!==node.userData.modelId)selectObject(node.userData.modelId);
+ const entry=selected();
+ if(!entry)return;
+ scaleDrag={pointerId:e.pointerId,modelId:entry.id,startX:e.clientX,startScale:entry.group.scale.x};
+ renderer.domElement.setPointerCapture?.(e.pointerId);
+ e.preventDefault();
+ e.stopImmediatePropagation();
+},true);
+renderer.domElement.addEventListener('pointermove',e=>{
+ if(!scaleDrag||e.pointerId!==scaleDrag.pointerId)return;
+ if(!uniformScaleTool||mode!=='build'||!canModify())return;
+ const entry=added.get(scaleDrag.modelId);
+ if(!entry)return;
+ const pixels=e.clientX-scaleDrag.startX;
+ const sensitivity=e.shiftKey?0.0018:0.009;
+ const factor=Math.exp(pixels*sensitivity);
+ const next=THREE.MathUtils.clamp(scaleDrag.startScale*factor,0.01,100);
+ entry.group.scale.setScalar(next);
+ updatePlacementUI();
+ e.preventDefault();
+});
+function finishScaleDrag(e){
+ if(!scaleDrag||e.pointerId!==scaleDrag.pointerId)return;
+ const completed=scaleDrag;
+ scaleDrag=null;
+ if(renderer.domElement.hasPointerCapture?.(e.pointerId))renderer.domElement.releasePointerCapture(e.pointerId);
+ if(e.type==='pointerup'&&canModify()&&added.has(completed.modelId))saveShared();
+}
+renderer.domElement.addEventListener('pointerup',finishScaleDrag);
+renderer.domElement.addEventListener('pointercancel',finishScaleDrag);
+
 renderer.domElement.addEventListener('pointerdown',e=>{
  if(mode!=='build'||pointerLocked||e.button!==0||transform.dragging)return;
  const box=renderer.domElement.getBoundingClientRect();mouse.set((e.clientX-box.left)/box.width*2-1,-(e.clientY-box.top)/box.height*2+1);ray.setFromCamera(mouse,camera);
@@ -353,7 +504,7 @@ renderer.domElement.addEventListener('pointerdown',e=>{
 });
 
 // Shared Supabase is the canonical source. No local IndexedDB writes in this version.
-$('save-btn').onclick=async()=>{if(!editingEnabled)return;saveShared();toast('Placement queued for saving to shared city.');};
+$('save-btn').onclick=async()=>{if(!canModify())return;saveShared();toast('Placement queued for saving to shared city.');};
 // Download a complete, portable snapshot of the live city. Always query the
 // database rather than relying on models currently loaded in this browser.
 // Read-only operation: permitted with the existing class read policies even
@@ -438,13 +589,67 @@ async function downloadCityBackup(){
 }
 $('export-btn').onclick=downloadCityBackup;
 
+// Teacher Mode: Supabase email/password login, authorized by the server-side teacher table.
+// The public website never stores teacher credentials as an access gate.
+$('teacher-toggle').onclick=()=>{
+ if(teacherAuthorized){
+   teacherMode=!teacherMode;
+   updateTeacherControls();
+   toast(teacherMode?'Teacher Mode enabled — edit contributed models.':'Teacher Mode exited.');
+ }else{
+   $('teacher-dialog').classList.remove('hidden');
+   $('teacher-email').focus();
+ }
+};
+$('teacher-cancel').onclick=()=>$('teacher-dialog').classList.add('hidden');
+$('teacher-email-form').onsubmit=async(e)=>{
+ e.preventDefault();
+ const email=$('teacher-email').value.trim();
+ const password=$('teacher-password').value;
+ if(!email||!password)return;
+ const btn=$('teacher-login-btn');btn.disabled=true;
+ try{
+  const {data,error}=await supabase.auth.signInWithPassword({email,password});
+  if(error)throw error;
+  authUser=data.user;online=true;
+  await readTeacherPermission();
+  if(!teacherAuthorized){
+    await supabase.auth.signOut();
+    const a=await supabase.auth.signInAnonymously();
+    if(a.error)throw a.error;
+    authUser=a.data.user;teacherMode=false;
+    await refreshSettings();await syncAllModels();
+    throw new Error('Account is not authorized for Teacher Mode.');
+  }
+  teacherMode=true;
+  $('teacher-password').value='';
+  $('teacher-dialog').classList.add('hidden');
+  await refreshSettings();await syncAllModels();updateTeacherControls();
+  toast('Teacher Mode enabled.');
+ }catch(err){toast('Teacher sign-in failed: '+err.message);}
+ finally{btn.disabled=false;}
+};
+$('teacher-signout').onclick=async()=>{
+ const {error}=await supabase.auth.signOut();
+ if(error){toast('Sign out failed: '+error.message);return;}
+ teacherAuthorized=false;teacherMode=false;online=false;authUser=null;
+ updateTeacherControls();
+ // Restore no-login student view with a new anonymous browser session.
+ const {data,error:anonError}=await supabase.auth.signInAnonymously();
+ if(anonError){toast('Anonymous reconnect failed: '+anonError.message);return;}
+ authUser=data.user;online=true;
+ await refreshSettings();await syncAllModels();showTeacherStatus();
+ toast('Signed out of teacher account.');
+};
+
+
 function showTab(next){releaseFly();mode=next;document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('selected',b.dataset.tab===mode));$('explore-panel').classList.toggle('hidden',mode!=='explore');$('build-panel').classList.toggle('hidden',mode!=='build');$('mode-label').textContent=mode==='explore'?'Explore mode':'Build mode';showTransformHandles();updateDeleteUI();updatePlacementUI();$('crosshair').style.display='none';$('hint').textContent=mode==='explore'?'Click Enter flythrough to fly around':'Select an imported object to move, rotate, or resize it';}
 document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>showTab(b.dataset.tab));
 $('start-btn').onclick=startFly;$('reset-btn').onclick=resetView;$('overview-btn').onclick=overview;
 $('speed').oninput=e=>$('speed-value').textContent=`${e.target.value}×`;
 $('height-reset').onchange=resetView;
 $('help-close').onclick=()=>$('help-modal').classList.add('hidden');
-window.addEventListener('keydown',e=>{if(['INPUT','SELECT','TEXTAREA'].includes(document.activeElement?.tagName))return;keys[e.code]=true;if(pointerLocked&&['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code))e.preventDefault();if(mode==='build'&&editingEnabled){if(e.code==='KeyG')setTool('translate');if(e.code==='KeyE')setTool('rotate');if(e.code==='KeyT')setTool('scale');}});
+window.addEventListener('keydown',e=>{if(['INPUT','SELECT','TEXTAREA'].includes(document.activeElement?.tagName))return;keys[e.code]=true;if(pointerLocked&&['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code))e.preventDefault();if(mode==='build'&&canModify()){if(e.code==='KeyG')setTool('translate');if(e.code==='KeyE')setTool('rotate');if(e.code==='KeyT')setTool('scale');}});
 window.addEventListener('keyup',e=>keys[e.code]=false);
 window.addEventListener('blur',()=>{for(const k in keys)keys[k]=false;});
 function animate(){requestAnimationFrame(animate);let dt=Math.min(clock.getDelta(),.05);

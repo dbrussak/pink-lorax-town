@@ -584,6 +584,12 @@ $('save-btn').onclick=async()=>{if(!canModify())return;saveShared();toast('Place
 // while editing is switched off. It does not delete or change server data.
 let exportingBackup=false;
 function setBackupStatus(message){$('backup-status').textContent=message;}
+function safeBackupModelName(value){
+ // Keep user-written model names readable without allowing ZIP path traversal.
+ const slug=String(value||'model').normalize('NFKD').replace(/[\u0300-\u036f]/g,'')
+   .toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'').slice(0,48);
+ return slug||'model';
+}
 async function downloadCityBackup(){
  if(exportingBackup)return;
  if(!online){toast('Connect to Supabase before exporting.');return;}
@@ -615,9 +621,11 @@ async function downloadCityBackup(){
   for(let i=0;i<rows.length;i++){
    const record=rows[i];
    setBackupStatus(`Downloading model ${i+1} of ${rows.length}: ${record.name||record.id}…`);
-   // Use UUID as the folder name to keep paths unique; don't use untrusted filenames.
-   const folder=models.folder(record.id);
    if(!/^[0-9a-f-]{36}$/i.test(record.id))throw new Error('Invalid model identifier in city database');
+   // Descriptive, ZIP-safe folder name with the immutable model UUID for uniqueness.
+   const backupFolderName=`${safeBackupModelName(record.name)}_${record.id}`;
+   const folder=models.folder(backupFolderName);
+   const backupPath=`student_models/${backupFolderName}`;
    if(!record.model_path || !record.model_path.toLowerCase().endsWith('.obj'))throw new Error('Invalid OBJ path for '+record.id);
    const {data:obj,error:objError}=await supabase.storage.from('city-models').download(record.model_path);
    if(objError)throw new Error('OBJ download failed for '+record.name+': '+objError.message);
@@ -638,16 +646,18 @@ async function downloadCityBackup(){
      else backupObjText='mtllib model.mtl\n'+backupObjText;
    }
    folder.file('model.obj',backupObjText);
+   folder.file('MODEL_INFO.txt',`Model name: ${record.name||'Unnamed model'}\nModel ID: ${record.id}\nOriginal OBJ storage path: ${record.model_path}\nCreated at: ${record.created_at||'Unknown'}\n\nPlacement in shared city:\nPosition X: ${record.position_x}\nPosition Y: ${record.position_y}\nPosition Z: ${record.position_z}\nRotation Y (radians): ${record.rotation_y}\nUniform scale: ${record.scale}\n`);
    manifest.push({
     ...record,
-    backup_obj:`student_models/${record.id}/model.obj`,
-    backup_mtl:mtl?`student_models/${record.id}/model.mtl`:null,
+    backup_obj:`${backupPath}/model.obj`,
+    backup_mtl:mtl?`${backupPath}/model.mtl`:null,
+    backup_info:`${backupPath}/MODEL_INFO.txt`,
     original_mtl_path:mtlPath,
    });
   }
   const exportedAt=new Date().toISOString();
   zip.file('city_layout.json',JSON.stringify({format:'pink-lorax-complete-city-backup-v1',exported_at:exportedAt,baseline_files:['baseline/tinker.obj','baseline/obj.mtl'],editing_enabled_at_export:settings.editing_enabled,models:manifest},null,2));
-  zip.file('README.txt',`Pink Lorax Town — full city backup\nCreated: ${exportedAt}\nStudent models: ${rows.length}\n\nContents:\n  baseline/ — Tinkercad base OBJ and MTL\n  student_models/<UUID>/model.obj and optional model.mtl\n  city_layout.json — Supabase rows including each model's transform\n\nThis is an archive, not a combined, pre-positioned OBJ.\nRestoring placement requires the city layout JSON and a restoration tool.\nNo files were removed from Supabase.\n`);
+  zip.file('README.txt',`Pink Lorax Town — full city backup\nCreated: ${exportedAt}\nStudent models: ${rows.length}\n\nContents:\n  baseline/ — Tinkercad base OBJ and MTL\n  student_models/<model-name>_<UUID>/model.obj and optional model.mtl\n  student_models/<model-name>_<UUID>/MODEL_INFO.txt — human-readable name and placement\n  city_layout.json — Supabase rows including each model's transform\n\nThis is an archive, not a combined, pre-positioned OBJ.\nRestoring placement requires the city layout JSON and a restoration tool.\nNo files were removed from Supabase.\n`);
   setBackupStatus('Compressing ZIP…');
   const blob=await zip.generateAsync({type:'blob',compression:'DEFLATE',compressionOptions:{level:5}},meta=>{setBackupStatus('Compressing ZIP… '+Math.round(meta.percent)+'%');});
   const url=URL.createObjectURL(blob);

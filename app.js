@@ -18,6 +18,8 @@ function showTeacherStatus(){
  status.textContent=teacherAuthorized ? (teacherMode ? 'TEACHER MODE ON' : 'Teacher verified') : 'Student / visitor';
  $('teacher-toggle').textContent=teacherAuthorized ? (teacherMode ? 'Exit Teacher Mode' : 'Enter Teacher Mode') : 'Teacher login';
  $('teacher-signout').classList.toggle('hidden',!teacherAuthorized);
+ $('refresh-baseline-btn').classList.toggle('hidden',!(teacherAuthorized && teacherMode));
+ $('refresh-baseline-btn').disabled=baselineRefreshing;
  $('teacher-help').textContent=teacherAuthorized ? 'Verified teacher. Enable Teacher Mode to edit or delete any contributed structure, even outside class.' : 'Teachers use their Supabase email and password; students still join without a login.';
 }
 function updateTeacherControls(){
@@ -263,17 +265,68 @@ function newWorldModel(objText,mtlText){
  orientation.updateMatrixWorld(true);
  return orientation;
 }
-async function loadCity(){
- try{
-  const [objRes,mtlRes]=await Promise.all([fetch('assets/tinker.obj'),fetch('assets/obj.mtl')]);
-  if(!objRes.ok||!mtlRes.ok)throw new Error('Could not fetch city files');
-  const [obj,mtl]=await Promise.all([objRes.text(),mtlRes.text()]);
-  baseTown=newWorldModel(obj,mtl);baseTown.name='Original city (locked)';
-  scene.add(baseTown);townBox=new THREE.Box3().setFromObject(baseTown);
-  resetView();$('loading').classList.add('hidden');
-  await initSupabase();
- }catch(err){$('loading').innerHTML=`<strong>Unable to load the city</strong><span>${escapeHtml(err.message)}</span><span>Open this site through GitHub Pages or a local web server, not by double-clicking index.html.</span>`;console.error(err);}
+// By default, use the browser/CDN cache for fast classroom loading.
+// Teacher Hard Refresh bypasses the cache for BOTH OBJ and MTL, without
+// modifying any student objects or their saved Supabase placement records.
+let baselineRefreshing = false;
+async function fetchBaselineAssets(bypassCache = false) {
+ const suffix = bypassCache ? `?refresh=${Date.now()}-${Math.random().toString(36).slice(2)}` : '';
+ const options = bypassCache ? {cache:'no-store'} : {cache:'default'};
+ const [objRes,mtlRes] = await Promise.all([
+   fetch(`assets/tinker.obj${suffix}`, options),
+   fetch(`assets/obj.mtl${suffix}`, options)
+ ]);
+ if(!objRes.ok || !mtlRes.ok)
+   throw new Error(`Could not fetch baseline files (OBJ ${objRes.status}, MTL ${mtlRes.status}).`);
+ return Promise.all([objRes.text(),mtlRes.text()]);
 }
+async function replaceBaseline(bypassCache = false) {
+ if(baselineRefreshing)return;
+ baselineRefreshing = true;
+ const refreshButton = $('refresh-baseline-btn');
+ if(refreshButton)refreshButton.disabled = true;
+ try{
+  const [obj,mtl] = await fetchBaselineAssets(bypassCache);
+  // Parse first; don't remove the previous city if the new file fails.
+  const newTown = newWorldModel(obj,mtl);
+  newTown.name = 'Original city (locked)';
+  const newBox = new THREE.Box3().setFromObject(newTown);
+  if(newBox.isEmpty())throw new Error('Baseline contains no geometry.');
+  const oldTown = baseTown;
+  scene.add(newTown);
+  baseTown = newTown;
+  townBox = newBox;
+  if(oldTown){
+   scene.remove(oldTown);
+   // Dispose GPU geometry/materials from old baseline; student models untouched.
+   oldTown.traverse(node=>{
+    if(!node.isMesh)return;
+    node.geometry?.dispose();
+    const mats = Array.isArray(node.material)?node.material:[node.material];
+    mats.forEach(m=>m?.dispose());
+   });
+  }else{
+   resetView();
+  }
+  if($('loading'))$('loading').classList.add('hidden');
+  if(bypassCache)toast('Baseline refreshed from GitHub. Student models and positions are unchanged.');
+ }catch(err){
+  if(baseTown){
+   toast('Baseline refresh failed; previous city retained: '+err.message);
+  }else{
+   $('loading').innerHTML=`<strong>Unable to load the city</strong><span>${escapeHtml(err.message)}</span><span>Open this site through GitHub Pages or a local web server, not by double-clicking index.html.</span>`;
+  }
+  console.error('Baseline loading failed',err);
+ }finally{
+  baselineRefreshing = false;
+  if(refreshButton)refreshButton.disabled = !(teacherAuthorized && teacherMode);
+ }
+}
+async function loadCity(){
+ await replaceBaseline(false);
+ if(baseTown)await initSupabase();
+}
+
 function escapeHtml(str){return String(str).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 
 const transform = new TransformControls(camera,renderer.domElement);
@@ -711,6 +764,10 @@ $('teacher-email-form').onsubmit=async(e)=>{
   toast('Teacher Mode enabled.');
  }catch(err){toast('Teacher sign-in failed: '+err.message);}
  finally{btn.disabled=false;}
+};
+$('refresh-baseline-btn').onclick=()=>{
+ if(!(teacherAuthorized && teacherMode)){toast('Enter Teacher Mode to refresh the baseline.');return;}
+ replaceBaseline(true);
 };
 $('teacher-signout').onclick=async()=>{
  const {error}=await supabase.auth.signOut();

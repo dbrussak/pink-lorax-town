@@ -99,3 +99,19 @@ Choose Build -> Scale, then drag left/right directly on any contributed model. A
 - The original single-OBJ baseline remains locked.
 - Student editing remains restricted to class time.
 - Update the root `index.html`, `app.js` and `style.css` on GitHub Pages. Do not replace your city `assets` folder.
+
+
+## V14: identifiable backup models
+
+Complete city ZIP exports now put each contributed model in a folder like `pink_lorax_museum_<UUID>/`, including `MODEL_INFO.txt` with its display name, ID and saved placement. The canonical `city_layout.json` keeps the same data and now points at the descriptive folder paths. Original OBJ/MTL content and Supabase records are unchanged. No new SQL required.
+
+
+V15 baseline reload fix: fresh fetch for the original city OBJ and MTL on every page load (cache: no-store plus a cache-busting URL). Existing Supabase model records are unchanged.
+
+## V16: Cached baseline + Teacher-only Hard Refresh
+- Normal page load uses regular browser/CDN caching for `assets/tinker.obj` and `assets/obj.mtl`.
+- Sign in as a verified teacher and enable Teacher Mode. In the Build panel, select **Hard Refresh Baseline**.
+- This refetches both assets with unique URLs and `cache: 'no-store'`, reparses them, and swaps the baseline model in place without reloading the webpage or touching contributed models.
+- If the fetch or parse fails, the existing baseline stays on screen.
+- You must publish the replacement OBJ/MTL files on GitHub Pages first. This button does not trigger a GitHub deployment.
+- No SQL or other asset updates required.
